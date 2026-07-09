@@ -266,7 +266,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       <button class="btn btn-success" id="btnGenReport" onclick="generateReport()">⬇ Download XLSX Report</button>
     </div>
     <div id="reportStatus" class="alert alert-info" style="margin-top:12px;display:none"></div>
-    <div id="xlsxLibStatus" class="alert alert-info" style="margin-top:12px;display:block">
+    <div id="offlineCapabilityInfo" class="alert alert-info" style="margin-top:12px;display:block">
       <strong>Offline-ready report download.</strong> XLSX files are generated locally in your browser with no CDN, no external script, and no network access required.
     </div>
   </div>
@@ -946,6 +946,7 @@ const XLSX = (() => {
   const XMLNS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
   const XMLNS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const SHEET_REL_ID_OFFSET = 2; // rId1 is reserved for styles.xml in workbook relationships.
+  const DEFAULT_FONT_KEY = '0|'; // fontMap key format: bold_flag|font_rgb.
   const encoder = new TextEncoder();
   const CRC_TABLE = new Uint32Array(256);
 
@@ -1039,7 +1040,7 @@ const XLSX = (() => {
       applyAlignment: false,
       wrapText: false
     }];
-    const fontMap = new Map([['0|', 0]]);
+    const fontMap = new Map([[DEFAULT_FONT_KEY, 0]]);
     const fillMap = new Map([['', 0]]);
     const xfMap = new Map([['', 0]]);
 
@@ -1273,7 +1274,7 @@ const XLSX = (() => {
   }
 
   function dosDateTime(date) {
-    const year = Math.max(1980, date.getFullYear());
+    const year = Math.max(1980, date.getFullYear()); // DOS timestamps cannot represent years before 1980.
     const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
     const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
     return { time: dosTime, date: dosDate };
