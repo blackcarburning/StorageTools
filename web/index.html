@@ -657,16 +657,20 @@ const HEALTH_QUERIES = [
 // APPLICATION STATE
 // ═══════════════════════════════════════════════════════════════════════════
 
+const DEFAULT_WINDOWS_DSMADMC = 'C:\\Program Files\\Tivoli\\TSM\\baclient\\dsmadmc.exe';
+const DEFAULT_UNIX_DSMADMC    = '/opt/tivoli/tsm/client/ba/bin/dsmadmc';
+const DEFAULT_OUTPUT_DIR      = 'StorageTools_Output';
+
 const STATE = {
   config: {
-    dsmadmcPath: 'C:\\Program Files\\Tivoli\\TSM\\baclient\\dsmadmc.exe',
-    dsmadmcPathUnix: '/opt/tivoli/tsm/client/ba/bin/dsmadmc',
+    dsmadmcPath: DEFAULT_WINDOWS_DSMADMC,
+    dsmadmcPathUnix: DEFAULT_UNIX_DSMADMC,
     adminId: '',
     adminPa: '',
     optfile: '',
     serverName: '',
     customerName: '',
-    outputDir: 'StorageTools_Output'
+    outputDir: DEFAULT_OUTPUT_DIR
   },
   imported: {}   // filename → { name, headers[], rows[][] }
 };
@@ -724,11 +728,11 @@ function generateCmdContent(type) {
   lines.push('setlocal');
   lines.push('');
   lines.push(
-    `SET "DSMADMC=${cfg.dsmadmcPath || 'C:\\Program Files\\Tivoli\\TSM\\baclient\\dsmadmc.exe'}"`
+    `SET "DSMADMC=${cfg.dsmadmcPath || DEFAULT_WINDOWS_DSMADMC}"`
   );
   lines.push(`SET "ADMID=${cfg.adminId || 'ADMINUSER'}"`);
   lines.push(`SET "ADMPA=${cfg.adminPa || 'PASSWORD'}"`);
-  lines.push(`SET "OUTDIR=${cfg.outputDir || 'StorageTools_Output'}"`);
+  lines.push(`SET "OUTDIR=${cfg.outputDir || DEFAULT_OUTPUT_DIR}"`);
   lines.push('');
   lines.push('REM Option file — leave blank if not required');
   lines.push(`SET "OPTFILE=${cfg.optfile || ''}"`);
@@ -797,7 +801,7 @@ function downloadCmd(type) {
 /** Quote arbitrary text as a single POSIX shell token. */
 function shellQuote(value) {
   const s = String(value ?? '');
-  return "'" + s.replace(/'/g, `'\"'\"'`) + "'";
+  return "'" + s.replace(/'/g, "'\"'\"'") + "'";
 }
 
 function buildShLine(query) {
@@ -831,11 +835,11 @@ function generateShContent(type) {
   lines.push('# https://www.ibm.com/docs/en/storage-protect/8.1.27?topic=servers-server-commands-options-utilities');
   lines.push('# =================================================================');
   lines.push('');
-  lines.push(`DSMADMC=${shellQuote(cfg.dsmadmcPathUnix || '/opt/tivoli/tsm/client/ba/bin/dsmadmc')}`);
+  lines.push(`DSMADMC=${shellQuote(cfg.dsmadmcPathUnix || DEFAULT_UNIX_DSMADMC)}`);
   lines.push(`ADMID=${shellQuote(cfg.adminId || 'ADMINUSER')}`);
   lines.push(`ADMPA=${shellQuote(cfg.adminPa || 'PASSWORD')}`);
   lines.push(`OPTFILE=${shellQuote(cfg.optfile || '')}`);
-  lines.push(`OUTDIR=${shellQuote(cfg.outputDir || 'StorageTools_Output')}`);
+  lines.push(`OUTDIR=${shellQuote(cfg.outputDir || DEFAULT_OUTPUT_DIR)}`);
   lines.push(`CUSTOMER=${shellQuote(cfg.customerName || '(not set)')}`);
   lines.push(`SERVER=${shellQuote(cfg.serverName || '(not set)')}`);
   lines.push('ERRLOG="$OUTDIR/collection_errors.log"');
@@ -1769,7 +1773,7 @@ function readConfig() {
     optfile      : document.getElementById('optfile').value.trim(),
     serverName   : document.getElementById('serverName').value.trim(),
     customerName : document.getElementById('customerName').value.trim(),
-    outputDir    : document.getElementById('outputDir').value.trim() || 'StorageTools_Output',
+    outputDir    : document.getElementById('outputDir').value.trim() || DEFAULT_OUTPUT_DIR,
   };
 }
 
@@ -1789,12 +1793,12 @@ function loadConfig() {
   if (!raw) { alert('No saved configuration found.'); return; }
   const cfg = JSON.parse(raw);
   document.getElementById('dsmadmcPath').value  = cfg.dsmadmcPath  || '';
-  document.getElementById('dsmadmcPathUnix').value = cfg.dsmadmcPathUnix || '/opt/tivoli/tsm/client/ba/bin/dsmadmc';
+  document.getElementById('dsmadmcPathUnix').value = cfg.dsmadmcPathUnix || DEFAULT_UNIX_DSMADMC;
   document.getElementById('adminId').value       = cfg.adminId      || '';
   document.getElementById('optfile').value       = cfg.optfile      || '';
   document.getElementById('serverName').value    = cfg.serverName   || '';
   document.getElementById('customerName').value  = cfg.customerName || '';
-  document.getElementById('outputDir').value     = cfg.outputDir    || 'StorageTools_Output';
+  document.getElementById('outputDir').value     = cfg.outputDir    || DEFAULT_OUTPUT_DIR;
   const el = document.getElementById('configStatus');
   el.textContent = 'Settings loaded. Please re-enter your password.';
   el.style.display = 'block';
