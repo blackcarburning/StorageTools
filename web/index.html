@@ -946,7 +946,8 @@ const XLSX = (() => {
   const XMLNS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
   const XMLNS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const SHEET_REL_ID_OFFSET = 2; // rId1 is reserved for styles.xml in workbook relationships.
-  const DEFAULT_FONT_KEY = '0|'; // Default font cache key: not bold, no color (bold_flag|font_rgb).
+  const FONT_KEY_DELIMITER = '|';
+  const DEFAULT_FONT_KEY = `0${FONT_KEY_DELIMITER}`; // Default font cache key: not bold, no color (bold_flag|font_rgb).
   const encoder = new TextEncoder();
   const CRC_TABLE = new Uint32Array(256);
 
@@ -1045,7 +1046,7 @@ const XLSX = (() => {
     const xfMap = new Map([['', 0]]);
 
     function ensureFont(style) {
-      const key = `${style.bold ? '1' : '0'}|${style.fontRgb}`;
+      const key = `${style.bold ? '1' : '0'}${FONT_KEY_DELIMITER}${style.fontRgb}`;
       if (fontMap.has(key)) return fontMap.get(key);
       const idx = fonts.length;
       fonts.push({ bold: style.bold, color: style.fontRgb, name: 'Calibri', size: 11 });
@@ -1159,7 +1160,7 @@ const XLSX = (() => {
       const cellsXml = rowMap.get(r).map(({ addr, cell }) => {
         const styleId = styles.getStyleId(cell.s);
         const styleAttr = styleId ? ` s="${styleId}"` : '';
-        if (cell.t === 'n' && typeof cell.v === 'number' && Number.isFinite(cell.v)) {
+        if (cell.t === 'n' && Number.isFinite(cell.v)) {
           return `<c r="${addr}"${styleAttr}><v>${cell.v}</v></c>`;
         }
         return `<c r="${addr}" t="inlineStr"${styleAttr}><is>${textNode(cell.v == null ? '' : cell.v)}</is></c>`;
