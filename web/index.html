@@ -946,8 +946,6 @@ const XLSX = (() => {
   const XMLNS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
   const XMLNS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const SHEET_REL_ID_OFFSET = 2; // rId1 is reserved for styles.xml in workbook relationships.
-  const FONT_KEY_DELIMITER = '|';
-  const DEFAULT_FONT_KEY = `0${FONT_KEY_DELIMITER}`; // Default font cache key: not bold, no color (bold_flag|font_rgb).
   const encoder = new TextEncoder();
   const CRC_TABLE = new Uint32Array(256);
 
@@ -1025,6 +1023,10 @@ const XLSX = (() => {
     };
   }
 
+  function fontKey(style) {
+    return JSON.stringify([!!style.bold, style.fontRgb || '']);
+  }
+
   function createStyleRegistry() {
     const fonts = [{ bold: false, color: '', name: 'Calibri', size: 11 }];
     const fills = [
@@ -1041,13 +1043,12 @@ const XLSX = (() => {
       applyAlignment: false,
       wrapText: false
     }];
-    const fontMap = new Map([[DEFAULT_FONT_KEY, 0]]);
+    const fontMap = new Map([[fontKey({ bold: false, fontRgb: '' }), 0]]);
     const fillMap = new Map([['', 0]]);
     const xfMap = new Map([['', 0]]);
 
     function ensureFont(style) {
-      // fontMap key format: bold_flag|font_rgb
-      const key = `${style.bold ? '1' : '0'}${FONT_KEY_DELIMITER}${style.fontRgb}`;
+      const key = fontKey(style);
       if (fontMap.has(key)) return fontMap.get(key);
       const idx = fonts.length;
       fonts.push({ bold: style.bold, color: style.fontRgb, name: 'Calibri', size: 11 });
@@ -1164,7 +1165,8 @@ const XLSX = (() => {
         if (cell.t === 'n' && Number.isFinite(cell.v)) {
           return `<c r="${addr}"${styleAttr}><v>${cell.v}</v></c>`;
         }
-        return `<c r="${addr}" t="inlineStr"${styleAttr}><is>${textNode(cell.v == null ? '' : cell.v)}</is></c>`;
+        const safeValue = cell.v == null || cell.t === 'n' ? '' : cell.v;
+        return `<c r="${addr}" t="inlineStr"${styleAttr}><is>${textNode(safeValue)}</is></c>`;
       }).join('');
       return `<row r="${r + 1}">${cellsXml}</row>`;
     }).join('');
@@ -1277,8 +1279,10 @@ const XLSX = (() => {
 
   /** Convert a JS date to DOS date/time fields; pre-1980 dates fall back to 1980-01-01 00:00:00. */
   function dosDateTime(date) {
-    // DOS timestamps cannot represent years before 1980, so older dates fall back to 1980-01-01 00:00:00.
-    const safeDate = date.getFullYear() < 1980 ? new Date(1980, 0, 1, 0, 0, 0) : date;
+    // DOS timestamps cannot represent years before 1980, so invalid/older dates fall back to 1980-01-01 00:00:00.
+    const safeDate = !Number.isFinite(date.getTime()) || date.getFullYear() < 1980
+      ? new Date(1980, 0, 1, 0, 0, 0)
+      : date;
     const year = safeDate.getFullYear();
     const dosTime = (safeDate.getHours() << 11) | (safeDate.getMinutes() << 5) | Math.floor(safeDate.getSeconds() / 2);
     const dosDate = ((year - 1980) << 9) | ((safeDate.getMonth() + 1) << 5) | safeDate.getDate();
@@ -1331,6 +1335,7 @@ const XLSX = (() => {
     return concatBytes([...localParts, centralDir, end]);
   }
 
+  /** Serialize the workbook to XLSX bytes; opts is accepted for API compatibility and currently supports only 'xlsx'. */
   function write(wb, opts) {
     if (opts && opts.bookType && opts.bookType !== 'xlsx') {
       throw new Error(`Unsupported bookType: ${opts.bookType}. Only 'xlsx' format is supported.`);
