@@ -945,6 +945,7 @@ function updateReportStats() {
 const XLSX = (() => {
   const XMLNS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
   const XMLNS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const SHEET_REL_ID_OFFSET = 2; // rId1 is reserved for styles.xml in workbook relationships.
   const encoder = new TextEncoder();
   const CRC_TABLE = new Uint32Array(256);
 
@@ -1013,7 +1014,7 @@ const XLSX = (() => {
     wb.Sheets[name] = ws;
   }
 
-  function normaliseStyle(style) {
+  function normalizeStyle(style) {
     return {
       fillRgb: style && style.fill && style.fill.fgColor && style.fill.fgColor.rgb ? String(style.fill.fgColor.rgb).toUpperCase() : '',
       fontRgb: style && style.font && style.font.color && style.font.color.rgb ? String(style.font.color.rgb).toUpperCase() : '',
@@ -1061,7 +1062,7 @@ const XLSX = (() => {
     }
 
     function getStyleId(style) {
-      const norm = normaliseStyle(style);
+      const norm = normalizeStyle(style);
       const key = JSON.stringify(norm);
       if (norm.fillRgb === '' && norm.fontRgb === '' && !norm.bold && !norm.wrapText) return 0;
       if (xfMap.has(key)) return xfMap.get(key);
@@ -1081,7 +1082,15 @@ const XLSX = (() => {
     }
 
     function fontXml(font) {
-      return `<font><sz val="${font.size}"/><name val="${font.name}"/><family val="2"/>${font.bold ? '<b/>' : ''}${font.color ? `<color rgb="${font.color}"/>` : ''}</font>`;
+      return [
+        '<font>',
+        `<sz val="${font.size}"/>`,
+        `<name val="${font.name}"/>`,
+        '<family val="2"/>',
+        font.bold ? '<b/>' : '',
+        font.color ? `<color rgb="${font.color}"/>` : '',
+        '</font>'
+      ].join('');
     }
 
     function fillXml(fill) {
@@ -1091,7 +1100,15 @@ const XLSX = (() => {
     }
 
     function xfXml(xf) {
-      return `<xf numFmtId="0" fontId="${xf.fontId}" fillId="${xf.fillId}" borderId="${xf.borderId}" xfId="${xf.xfId}"${xf.applyFont ? ' applyFont="1"' : ''}${xf.applyFill ? ' applyFill="1"' : ''}${xf.applyAlignment ? ' applyAlignment="1"' : ''}>${xf.applyAlignment ? '<alignment wrapText="1" vertical="top"/>' : ''}</xf>`;
+      return [
+        `<xf numFmtId="0" fontId="${xf.fontId}" fillId="${xf.fillId}" borderId="${xf.borderId}" xfId="${xf.xfId}"`,
+        xf.applyFont ? ' applyFont="1"' : '',
+        xf.applyFill ? ' applyFill="1"' : '',
+        xf.applyAlignment ? ' applyAlignment="1"' : '',
+        '>',
+        xf.applyAlignment ? '<alignment wrapText="1" vertical="top"/>' : '',
+        '</xf>'
+      ].join('');
     }
 
     function toXml() {
@@ -1132,9 +1149,10 @@ const XLSX = (() => {
 
     const ref = ws['!ref'] || 'A1:A1';
     const cols = Array.isArray(ws['!cols']) ? ws['!cols'] : [];
-    const colXml = cols.length
-      ? `<cols>${cols.map((col, i) => `<col min="${i + 1}" max="${i + 1}" width="${Number(col.wch || 10)}" customWidth="1"/>`).join('')}</cols>`
-      : '';
+    const colXml = cols.length ? `<cols>${cols.map((col, i) => {
+      const width = Number(col.wch || 10);
+      return `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`;
+    }).join('')}</cols>` : '';
 
     const rowsXml = rowNums.map(r => {
       const cellsXml = rowMap.get(r).map(({ addr, cell }) => {
@@ -1164,7 +1182,7 @@ const XLSX = (() => {
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       `<workbook xmlns="${XMLNS_MAIN}" xmlns:r="${XMLNS_REL}">`,
       '<sheets>',
-      sheetNames.map((name, i) => `<sheet name="${xmlEscape(name)}" sheetId="${i + 1}" r:id="rId${i + 2}"/>`).join(''),
+      sheetNames.map((name, i) => `<sheet name="${xmlEscape(name)}" sheetId="${i + 1}" r:id="rId${i + SHEET_REL_ID_OFFSET}"/>`).join(''),
       '</sheets>',
       '</workbook>'
     ].join('');
@@ -1173,7 +1191,7 @@ const XLSX = (() => {
   function workbookRelsXml(sheetCount) {
     const rels = ['<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'];
     for (let i = 0; i < sheetCount; i++) {
-      rels.push(`<Relationship Id="rId${i + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`);
+      rels.push(`<Relationship Id="rId${i + SHEET_REL_ID_OFFSET}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`);
     }
     return [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
@@ -1218,9 +1236,7 @@ const XLSX = (() => {
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">',
       '<Application>StorageTools Web Helper</Application>',
-      '<HeadingPairs><vt:vector size="2" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>',
-      String(sheetNames.length),
-      '</vt:i4></vt:variant></vt:vector></HeadingPairs>',
+      `<HeadingPairs><vt:vector size="2" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>${sheetNames.length}</vt:i4></vt:variant></vt:vector></HeadingPairs>`,
       `<TitlesOfParts><vt:vector size="${sheetNames.length}" baseType="lpstr">${sheetNames.map(name => `<vt:lpstr>${xmlEscape(name)}</vt:lpstr>`).join('')}</vt:vector></TitlesOfParts>`,
       '</Properties>'
     ].join('');
