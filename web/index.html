@@ -797,7 +797,7 @@ function downloadCmd(type) {
 /** Quote arbitrary text as a single POSIX shell token. */
 function shellQuote(value) {
   const s = String(value ?? '');
-  return `'${s.replace(/'/g, `'"'"'`)}'`;
+  return "'" + s.replace(/'/g, `'\"'\"'`) + "'";
 }
 
 function buildShLine(query) {
