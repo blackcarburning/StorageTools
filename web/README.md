@@ -1,0 +1,173 @@
+# StorageTools Web Helper — IBM Storage Protect v8 Report Helper
+
+A self-contained, **no-install** browser application that generates `dsmadmc` collection
+scripts for IBM Storage Protect (formerly Spectrum Protect / TSM), parses their output, and
+produces a coloured multi-sheet XLSX report.
+
+---
+
+## Requirements
+
+| Component | Requirement |
+|-----------|-------------|
+| Browser   | Any modern browser (Chrome, Edge, Firefox). No server needed — open `index.html` directly. |
+| Windows host | `dsmadmc.exe` from the IBM Storage Protect administrative client package. |
+| xlsx-js-style | Loaded automatically from jsDelivr CDN. See [Offline usage](#offline-usage) if no internet. |
+
+---
+
+## Workflow
+
+### Step 1 — Open the app
+Open `web/index.html` in your browser. No web server is required.
+
+### Step 2 — Configure (Setup tab)
+Fill in:
+- **Full path to `dsmadmc.exe`** — e.g. `C:\Program Files\Tivoli\TSM\baclient\dsmadmc.exe`
+- **Admin User ID** and **Password** — a Spectrum Protect admin with at least `ANALYST` privilege
+- **Option file path** — optional, leave blank if the server is reached without an options file
+- **Server name / label** — used to name output files (no functional impact)
+- **Customer name** — included in report headers
+- **Output sub-directory** — created beside the CMD file when run (default: `StorageTools_Output`)
+
+Click **Save to Browser** to persist settings between sessions (password is never saved).
+
+### Step 3 — Download CMD files (Generate CMDs tab)
+Click **Download Documentation CMD** and/or **Download Healthcheck CMD**.
+
+Two `.cmd` files will be downloaded:
+- `StorageTools_Documentation_<SERVER>.cmd` — SQL SELECT queries covering full server configuration (see `DOC_QUERIES` in `index.html` for the full list)
+- `StorageTools_Healthcheck_<SERVER>.cmd` — SQL SELECT queries covering operational health (see `HEALTH_QUERIES` in `index.html` for the full list)
+
+### Step 4 — Run CMD files on the Windows host
+Copy the CMD file(s) to the Windows server or workstation that has `dsmadmc.exe`.
+
+Run from a **Command Prompt** (not PowerShell):
+```cmd
+StorageTools_Documentation_TSMSERVER01.cmd
+```
+
+Each query creates one `.csv` file in the `StorageTools_Output` sub-folder.
+Errors are written to `collection_errors.log` — query failures do **not** stop the batch.
+
+> **Tip:** Run as a Windows user with filesystem access to the `dsmadmc.exe` location and
+> network access to the IBM Storage Protect server.
+
+### Step 5 — Import results (Import Results tab)
+Return to the web app. On the **Import Results** tab:
+1. Click the file-drop area (or drag-and-drop) and select **all** `.csv` files from the
+   `StorageTools_Output` folder.
+2. The status table updates immediately, showing:
+   - ✅ **Imported** — file present with data rows
+   - ⚠️ **No rows** — file imported but query returned no results (normal for empty tables)
+   - ⬜ **Not imported** — file not yet selected
+
+### Step 6 — Generate report (Report tab)
+Click **Download XLSX Report**. A coloured workbook is saved with:
+- **Index** sheet: import status and row counts for all queries
+- **13 documentation sheets**: Server, Admins, Nodes, Filespaces, Policy, Schedules, Storage,
+  Volumes, Occupancy, Replication, DR, Advanced\_v8, Scripts
+- **6 healthcheck sheets**: HC\_Database, HC\_Storage, HC\_Schedules, HC\_Nodes,
+  HC\_Activity, HC\_Advanced
+
+---
+
+## Security
+
+> ⚠️ **The generated CMD files contain your IBM Storage Protect admin password in plain text.**
+
+1. **Delete the CMD files and the output folder immediately** after importing results into the app.
+2. Do not email, store in shared drives, or commit CMD files to source control.
+3. Do not share output CSV files unless you are sure they contain no sensitive data.
+4. Consider resetting the admin account password after the collection run.
+5. On Windows, command-line passwords may be visible to local process inspection tools
+   (Task Manager, Sysinternals Process Explorer, endpoint monitoring agents).
+
+### Passwords with special characters
+If your password contains any of: `! ^ & | < > %`
+
+- `%` — double it to `%%` in the `SET "ADMPA=..."` line (CMD escaping)
+- `!` — avoid if `EnableDelayedExpansion` is used; the generated scripts do **not** use it,
+  so `!` in passwords is generally safe with standard `setlocal`
+- `^`, `&`, `|`, `<`, `>` — may require prefixing with `^` in CMD variable values
+
+For complex passwords, consider using an option file with the password stored via
+IBM Storage Protect client options instead of command-line flags.
+
+---
+
+## SQL Version Compatibility
+
+All SELECT statements target **IBM Storage Protect v8.1.x** (DB2-based SQL engine).
+
+Key v8 SQL practices used:
+- `DISTINCT` keyword instead of the deprecated `unique()` aggregate
+- `FLOAT(col)` for safe numeric division (avoids integer truncation)
+- `DECIMAL(n,m)` casts for all computed GB/percentage values
+- `CURRENT_TIMESTAMP - N DAYS/HOURS` for timestamp arithmetic
+- `SUBSTR(CHAR(timestamp), 1, 19)` for safe datetime formatting
+- `INNER JOIN` syntax for multi-table queries
+
+Queries marked **[v8 only]** target tables introduced in SP v8:
+- `CONTAINERS` — directory/cloud container pool objects
+- `REPLICATIONRULES` — v8 replication rule definitions
+- `STGRULES` — storage rules (v8.1.8+)
+- `RETENTIONSETS` — retention set definitions (v8.1.4+)
+- v8-extended columns on `STGPOOLS` (cloud storage columns)
+
+These queries **silently fail** on older servers and their errors are captured to
+`collection_errors.log` without stopping the batch.
+
+---
+
+## Offline Usage
+
+The app uses [xlsx-js-style](https://github.com/gitbrent/xlsx-js-style) (v1.2.0) loaded
+from jsDelivr CDN for XLSX generation.
+
+**To use offline:**
+1. Download the library:
+   ```
+   https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.js
+   ```
+2. Save it as `web/xlsx.js` (alongside `index.html`).
+3. In `index.html`, find the `<script src="https://cdn.jsdelivr.net/...">` tag near the
+   bottom and change it to:
+   ```html
+   <script src="xlsx.js"></script>
+   ```
+4. The app is now fully self-contained with no network dependency.
+
+---
+
+## Files Generated
+
+| File | Description |
+|------|-------------|
+| `StorageTools_Documentation_<SERVER>.cmd` | Windows batch — documentation collection (39 queries) |
+| `StorageTools_Healthcheck_<SERVER>.cmd`   | Windows batch — healthcheck collection (28 queries) |
+| `StorageTools_Output\doc_01_status.csv`   | One CSV per documentation query |
+| `StorageTools_Output\hc_01_db_space.csv`  | One CSV per healthcheck query |
+| `StorageTools_Output\collection_log.txt`  | Collection start/end timestamps |
+| `StorageTools_Output\collection_errors.log` | Any query errors (non-fatal) |
+| `StorageTools_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Final coloured XLSX report |
+
+---
+
+## Legacy Tool
+
+The original Perl tool `STORAGE_TOOLS_v2.113.pl` remains unchanged in the repository root (`/STORAGE_TOOLS_v2.113.pl`).
+This web helper is an independent addition and does not modify or replace the Perl tool.
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| CMD file opens and closes instantly | Right-click → Run as Administrator, or run from Command Prompt |
+| `dsmadmc.exe` not found | Verify the full path in Setup; use `dir "C:\...\dsmadmc.exe"` to confirm |
+| All output files empty | Check `collection_errors.log`; verify admin credentials and server connectivity |
+| XLSX download button does nothing | Ensure `xlsx-js-style` CDN is reachable, or switch to offline mode (see above) |
+| v8-only queries all fail | Expected on SP v7 and earlier; core queries still succeed |
+| Password with `%` breaks CMD | Double the `%` character in the `SET "ADMPA=..."` line of the CMD file |
