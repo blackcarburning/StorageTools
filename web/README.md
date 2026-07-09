@@ -12,7 +12,7 @@ produces a coloured multi-sheet XLSX report.
 |-----------|-------------|
 | Browser   | Any modern browser (Chrome, Edge, Firefox). No server needed — open `index.html` directly. |
 | Windows host | `dsmadmc.exe` from the IBM Storage Protect administrative client package. |
-| xlsx-js-style | Loaded automatically from jsDelivr CDN. See [Offline usage](#offline-usage) if no internet. |
+| XLSX export | Built into `index.html` as a self-contained exporter; no CDN, installation, or companion files required. |
 
 ---
 
@@ -122,21 +122,8 @@ These queries **silently fail** on older servers and their errors are captured t
 
 ## Offline Usage
 
-The app uses [xlsx-js-style](https://github.com/gitbrent/xlsx-js-style) (v1.2.0) loaded
-from jsDelivr CDN for XLSX generation.
-
-**To use offline:**
-1. Download the library:
-   ```
-   https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.js
-   ```
-2. Save it as `web/xlsx.js` (alongside `index.html`).
-3. In `index.html`, find the `<script src="https://cdn.jsdelivr.net/...">` tag near the
-   bottom and change it to:
-   ```html
-   <script src="xlsx.js"></script>
-   ```
-4. The app is now fully self-contained with no network dependency.
+`web/index.html` is fully self-contained. XLSX generation is implemented directly in the
+page, so report downloads work offline with no CDN access and no extra files.
 
 ---
 
@@ -168,6 +155,6 @@ This web helper is an independent addition and does not modify or replace the Pe
 | CMD file opens and closes instantly | Right-click → Run as Administrator, or run from Command Prompt |
 | `dsmadmc.exe` not found | Verify the full path in Setup; use `dir "C:\...\dsmadmc.exe"` to confirm |
 | All output files empty | Check `collection_errors.log`; verify admin credentials and server connectivity |
-| XLSX download button does nothing | Ensure `xlsx-js-style` CDN is reachable, or switch to offline mode (see above) |
+| XLSX download button does nothing | Confirm your browser allows downloads from local files and review the browser console for any client-side errors |
 | v8-only queries all fail | Expected on SP v7 and earlier; core queries still succeed |
 | Password with `%` breaks CMD | Double the `%` character in the `SET "ADMPA=..."` line of the CMD file |
