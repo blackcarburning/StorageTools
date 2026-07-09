@@ -1046,6 +1046,7 @@ const XLSX = (() => {
     const xfMap = new Map([['', 0]]);
 
     function ensureFont(style) {
+      // fontMap key format: bold_flag|font_rgb
       const key = `${style.bold ? '1' : '0'}${FONT_KEY_DELIMITER}${style.fontRgb}`;
       if (fontMap.has(key)) return fontMap.get(key);
       const idx = fonts.length;
@@ -1275,8 +1276,9 @@ const XLSX = (() => {
   }
 
   function dosDateTime(date) {
+    // DOS timestamps cannot represent years before 1980, so older dates fall back to 1980-01-01 00:00:00.
     const safeDate = date.getFullYear() < 1980 ? new Date(1980, 0, 1, 0, 0, 0) : date;
-    const year = safeDate.getFullYear(); // DOS timestamps cannot represent years before 1980.
+    const year = safeDate.getFullYear();
     const dosTime = (safeDate.getHours() << 11) | (safeDate.getMinutes() << 5) | Math.floor(safeDate.getSeconds() / 2);
     const dosDate = ((year - 1980) << 9) | ((safeDate.getMonth() + 1) << 5) | safeDate.getDate();
     return { time: dosTime, date: dosDate };
@@ -1330,7 +1332,7 @@ const XLSX = (() => {
 
   function write(wb, opts) {
     if (opts && opts.bookType && opts.bookType !== 'xlsx') {
-      throw new Error(`Unsupported bookType: ${opts.bookType}`);
+      throw new Error(`Unsupported bookType: ${opts.bookType}. Only "xlsx" format is supported.`);
     }
     const styles = createStyleRegistry();
     const sheets = wb.SheetNames.map(name => sheetToXml(wb.Sheets[name], styles));
