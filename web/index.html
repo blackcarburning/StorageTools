@@ -266,12 +266,8 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       <button class="btn btn-success" id="btnGenReport" onclick="generateReport()">⬇ Download XLSX Report</button>
     </div>
     <div id="reportStatus" class="alert alert-info" style="margin-top:12px;display:none"></div>
-    <div id="xlsxLibStatus" class="alert alert-warn" style="margin-top:12px;display:none">
-      <strong>xlsx-js-style library not loaded.</strong> The report requires the <code>xlsx-js-style</code> library.
-      <ul style="margin:6px 0 0 18px">
-        <li>If online: ensure CDN is reachable (<code>cdn.jsdelivr.net</code>).</li>
-        <li>If offline: <a href="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.js" target="_blank">download xlsx.js</a> and save it alongside <code>index.html</code>, then update the <code>&lt;script src&gt;</code> tag to use a relative path.</li>
-      </ul>
+    <div id="xlsxLibStatus" class="alert alert-info" style="margin-top:12px;display:block">
+      <strong>Offline-ready report download.</strong> XLSX files are generated locally in your browser with no CDN, no external script, and no network access required.
     </div>
   </div>
 
@@ -324,10 +320,6 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
 
 <footer>StorageTools Web Helper · IBM Storage Protect v8 qualified SQL · No install required · Legacy Perl tool: STORAGE_TOOLS_v2.113.pl</footer>
 <div id="statusBar"></div>
-
-<!-- xlsx-js-style: SheetJS fork with cell styling support.
-     If offline, download from the URL below and update this src to a local path. -->
-<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.js"></script>
 
 <script>
 'use strict';
@@ -947,8 +939,410 @@ function updateReportStats() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// XLSX REPORT GENERATION  — uses xlsx-js-style
+// XLSX REPORT GENERATION  — self-contained XLSX writer (no external library)
 // ═══════════════════════════════════════════════════════════════════════════
+
+const XLSX = (() => {
+  const XMLNS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  const XMLNS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const encoder = new TextEncoder();
+  const CRC_TABLE = new Uint32Array(256);
+
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    CRC_TABLE[n] = c >>> 0;
+  }
+
+  function xmlEscape(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  function utf8(str) {
+    return encoder.encode(str);
+  }
+
+  function encodeCol(c) {
+    let s = '';
+    let n = c;
+    while (n >= 0) {
+      s = String.fromCharCode((n % 26) + 65) + s;
+      n = Math.floor(n / 26) - 1;
+    }
+    return s;
+  }
+
+  function decodeCol(col) {
+    let n = 0;
+    for (let i = 0; i < col.length; i++) n = n * 26 + (col.charCodeAt(i) - 64);
+    return n - 1;
+  }
+
+  function encodeCell(addr) {
+    return encodeCol(addr.c) + String(addr.r + 1);
+  }
+
+  function decodeCell(addr) {
+    const m = /^([A-Z]+)(\d+)$/.exec(String(addr).toUpperCase());
+    if (!m) throw new Error(`Invalid cell address: ${addr}`);
+    return { c: decodeCol(m[1]), r: parseInt(m[2], 10) - 1 };
+  }
+
+  function encodeRange(range) {
+    return `${encodeCell(range.s)}:${encodeCell(range.e)}`;
+  }
+
+  function decodeRange(ref) {
+    const parts = String(ref).split(':');
+    const start = decodeCell(parts[0]);
+    const end = decodeCell(parts[1] || parts[0]);
+    return { s: start, e: end };
+  }
+
+  function book_new() {
+    return { SheetNames: [], Sheets: {} };
+  }
+
+  function book_append_sheet(wb, ws, name) {
+    wb.SheetNames.push(name);
+    wb.Sheets[name] = ws;
+  }
+
+  function normaliseStyle(style) {
+    return {
+      fillRgb: style && style.fill && style.fill.fgColor && style.fill.fgColor.rgb ? String(style.fill.fgColor.rgb).toUpperCase() : '',
+      fontRgb: style && style.font && style.font.color && style.font.color.rgb ? String(style.font.color.rgb).toUpperCase() : '',
+      bold: !!(style && style.font && style.font.bold),
+      wrapText: !!(style && style.alignment && style.alignment.wrapText)
+    };
+  }
+
+  function createStyleRegistry() {
+    const fonts = [{ bold: false, color: '', name: 'Calibri', size: 11 }];
+    const fills = [
+      { type: 'none' },
+      { type: 'gray125' }
+    ];
+    const xfs = [{
+      fontId: 0,
+      fillId: 0,
+      borderId: 0,
+      xfId: 0,
+      applyFont: false,
+      applyFill: false,
+      applyAlignment: false,
+      wrapText: false
+    }];
+    const fontMap = new Map([['0|', 0]]);
+    const fillMap = new Map([['', 0]]);
+    const xfMap = new Map([['', 0]]);
+
+    function ensureFont(style) {
+      const key = `${style.bold ? '1' : '0'}|${style.fontRgb}`;
+      if (fontMap.has(key)) return fontMap.get(key);
+      const idx = fonts.length;
+      fonts.push({ bold: style.bold, color: style.fontRgb, name: 'Calibri', size: 11 });
+      fontMap.set(key, idx);
+      return idx;
+    }
+
+    function ensureFill(style) {
+      const key = style.fillRgb || '';
+      if (fillMap.has(key)) return fillMap.get(key);
+      const idx = fills.length;
+      fills.push({ type: 'solid', color: style.fillRgb });
+      fillMap.set(key, idx);
+      return idx;
+    }
+
+    function getStyleId(style) {
+      const norm = normaliseStyle(style);
+      const key = JSON.stringify(norm);
+      if (norm.fillRgb === '' && norm.fontRgb === '' && !norm.bold && !norm.wrapText) return 0;
+      if (xfMap.has(key)) return xfMap.get(key);
+      const idx = xfs.length;
+      xfs.push({
+        fontId: ensureFont(norm),
+        fillId: ensureFill(norm),
+        borderId: 0,
+        xfId: 0,
+        applyFont: !!(norm.fontRgb || norm.bold),
+        applyFill: !!norm.fillRgb,
+        applyAlignment: norm.wrapText,
+        wrapText: norm.wrapText
+      });
+      xfMap.set(key, idx);
+      return idx;
+    }
+
+    function fontXml(font) {
+      return `<font><sz val="${font.size}"/><name val="${font.name}"/><family val="2"/>${font.bold ? '<b/>' : ''}${font.color ? `<color rgb="${font.color}"/>` : ''}</font>`;
+    }
+
+    function fillXml(fill) {
+      if (fill.type === 'gray125') return '<fill><patternFill patternType="gray125"/></fill>';
+      if (fill.type === 'solid') return `<fill><patternFill patternType="solid"><fgColor rgb="${fill.color}"/><bgColor indexed="64"/></patternFill></fill>`;
+      return '<fill><patternFill patternType="none"/></fill>';
+    }
+
+    function xfXml(xf) {
+      return `<xf numFmtId="0" fontId="${xf.fontId}" fillId="${xf.fillId}" borderId="${xf.borderId}" xfId="${xf.xfId}"${xf.applyFont ? ' applyFont="1"' : ''}${xf.applyFill ? ' applyFill="1"' : ''}${xf.applyAlignment ? ' applyAlignment="1"' : ''}>${xf.applyAlignment ? '<alignment wrapText="1" vertical="top"/>' : ''}</xf>`;
+    }
+
+    function toXml() {
+      return [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        `<styleSheet xmlns="${XMLNS_MAIN}">`,
+        `<fonts count="${fonts.length}">${fonts.map(fontXml).join('')}</fonts>`,
+        `<fills count="${fills.length}">${fills.map(fillXml).join('')}</fills>`,
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>',
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>',
+        `<cellXfs count="${xfs.length}">${xfs.map(xfXml).join('')}</cellXfs>`,
+        '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>',
+        '</styleSheet>'
+      ].join('');
+    }
+
+    return { getStyleId, toXml };
+  }
+
+  function textNode(text) {
+    const value = String(text);
+    const preserve = /^[\s]|[\s]$|[\r\n\t]/.test(value);
+    return `<t${preserve ? ' xml:space="preserve"' : ''}>${xmlEscape(value)}</t>`;
+  }
+
+  function sheetToXml(ws, styles) {
+    const rowMap = new Map();
+
+    Object.keys(ws).forEach(addr => {
+      if (addr[0] === '!') return;
+      const pos = decodeCell(addr);
+      if (!rowMap.has(pos.r)) rowMap.set(pos.r, []);
+      rowMap.get(pos.r).push({ addr, col: pos.c, cell: ws[addr] });
+    });
+
+    const rowNums = Array.from(rowMap.keys()).sort((a, b) => a - b);
+    rowNums.forEach(r => rowMap.get(r).sort((a, b) => a.col - b.col));
+
+    const ref = ws['!ref'] || 'A1:A1';
+    const cols = Array.isArray(ws['!cols']) ? ws['!cols'] : [];
+    const colXml = cols.length
+      ? `<cols>${cols.map((col, i) => `<col min="${i + 1}" max="${i + 1}" width="${Number(col.wch || 10)}" customWidth="1"/>`).join('')}</cols>`
+      : '';
+
+    const rowsXml = rowNums.map(r => {
+      const cellsXml = rowMap.get(r).map(({ addr, cell }) => {
+        const styleId = styles.getStyleId(cell.s);
+        const styleAttr = styleId ? ` s="${styleId}"` : '';
+        if (cell.t === 'n' && typeof cell.v === 'number' && Number.isFinite(cell.v)) {
+          return `<c r="${addr}"${styleAttr}><v>${cell.v}</v></c>`;
+        }
+        return `<c r="${addr}" t="inlineStr"${styleAttr}><is>${textNode(cell.v == null ? '' : cell.v)}</is></c>`;
+      }).join('');
+      return `<row r="${r + 1}">${cellsXml}</row>`;
+    }).join('');
+
+    return [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      `<worksheet xmlns="${XMLNS_MAIN}">`,
+      `<dimension ref="${xmlEscape(ref)}"/>`,
+      '<sheetViews><sheetView workbookViewId="0"/></sheetViews>',
+      colXml,
+      `<sheetData>${rowsXml}</sheetData>`,
+      '</worksheet>'
+    ].join('');
+  }
+
+  function workbookXml(sheetNames) {
+    return [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      `<workbook xmlns="${XMLNS_MAIN}" xmlns:r="${XMLNS_REL}">`,
+      '<sheets>',
+      sheetNames.map((name, i) => `<sheet name="${xmlEscape(name)}" sheetId="${i + 1}" r:id="rId${i + 2}"/>`).join(''),
+      '</sheets>',
+      '</workbook>'
+    ].join('');
+  }
+
+  function workbookRelsXml(sheetCount) {
+    const rels = ['<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'];
+    for (let i = 0; i < sheetCount; i++) {
+      rels.push(`<Relationship Id="rId${i + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`);
+    }
+    return [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+      rels.join(''),
+      '</Relationships>'
+    ].join('');
+  }
+
+  function rootRelsXml() {
+    return [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>',
+      '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>',
+      '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>',
+      '</Relationships>'
+    ].join('');
+  }
+
+  function contentTypesXml(sheetCount) {
+    const sheetOverrides = [];
+    for (let i = 0; i < sheetCount; i++) {
+      sheetOverrides.push(`<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`);
+    }
+    return [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+      '<Default Extension="xml" ContentType="application/xml"/>',
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
+      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>',
+      '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>',
+      '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>',
+      sheetOverrides.join(''),
+      '</Types>'
+    ].join('');
+  }
+
+  function appXml(sheetNames) {
+    return [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">',
+      '<Application>StorageTools Web Helper</Application>',
+      '<HeadingPairs><vt:vector size="2" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>',
+      String(sheetNames.length),
+      '</vt:i4></vt:variant></vt:vector></HeadingPairs>',
+      `<TitlesOfParts><vt:vector size="${sheetNames.length}" baseType="lpstr">${sheetNames.map(name => `<vt:lpstr>${xmlEscape(name)}</vt:lpstr>`).join('')}</vt:vector></TitlesOfParts>`,
+      '</Properties>'
+    ].join('');
+  }
+
+  function coreXml() {
+    const now = new Date().toISOString();
+    return [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
+      '<dc:creator>StorageTools Web Helper</dc:creator>',
+      '<cp:lastModifiedBy>StorageTools Web Helper</cp:lastModifiedBy>',
+      `<dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created>`,
+      `<dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified>`,
+      '</cp:coreProperties>'
+    ].join('');
+  }
+
+  function concatBytes(parts) {
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    parts.forEach(part => {
+      out.set(part, offset);
+      offset += part.length;
+    });
+    return out;
+  }
+
+  function crc32(bytes) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function dosDateTime(date) {
+    const year = Math.max(1980, date.getFullYear());
+    const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+    const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+    return { time: dosTime, date: dosDate };
+  }
+
+  function u16(n) {
+    return Uint8Array.of(n & 0xFF, (n >>> 8) & 0xFF);
+  }
+
+  function u32(n) {
+    return Uint8Array.of(n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF);
+  }
+
+  function zip(entries) {
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+    const stamp = dosDateTime(new Date());
+
+    entries.forEach(entry => {
+      const nameBytes = utf8(entry.name);
+      const data = entry.data;
+      const crc = crc32(data);
+      const localHeader = concatBytes([
+        u32(0x04034B50), u16(20), u16(0), u16(0),
+        u16(stamp.time), u16(stamp.date),
+        u32(crc), u32(data.length), u32(data.length),
+        u16(nameBytes.length), u16(0), nameBytes
+      ]);
+      localParts.push(localHeader, data);
+
+      const centralHeader = concatBytes([
+        u32(0x02014B50), u16(20), u16(20), u16(0), u16(0),
+        u16(stamp.time), u16(stamp.date),
+        u32(crc), u32(data.length), u32(data.length),
+        u16(nameBytes.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), nameBytes
+      ]);
+      centralParts.push(centralHeader);
+      offset += localHeader.length + data.length;
+    });
+
+    const centralDir = concatBytes(centralParts);
+    const end = concatBytes([
+      u32(0x06054B50), u16(0), u16(0),
+      u16(entries.length), u16(entries.length),
+      u32(centralDir.length), u32(offset), u16(0)
+    ]);
+
+    return concatBytes([...localParts, centralDir, end]);
+  }
+
+  function write(wb, opts) {
+    if (opts && opts.bookType && opts.bookType !== 'xlsx') {
+      throw new Error(`Unsupported bookType: ${opts.bookType}`);
+    }
+    const styles = createStyleRegistry();
+    const sheets = wb.SheetNames.map(name => sheetToXml(wb.Sheets[name], styles));
+    const entries = [
+      { name: '[Content_Types].xml',           data: utf8(contentTypesXml(wb.SheetNames.length)) },
+      { name: '_rels/.rels',                   data: utf8(rootRelsXml()) },
+      { name: 'docProps/app.xml',              data: utf8(appXml(wb.SheetNames)) },
+      { name: 'docProps/core.xml',             data: utf8(coreXml()) },
+      { name: 'xl/workbook.xml',               data: utf8(workbookXml(wb.SheetNames)) },
+      { name: 'xl/_rels/workbook.xml.rels',    data: utf8(workbookRelsXml(wb.SheetNames.length)) },
+      { name: 'xl/styles.xml',                 data: utf8(styles.toXml()) }
+    ];
+
+    sheets.forEach((sheetXml, i) => {
+      entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: utf8(sheetXml) });
+    });
+
+    return zip(entries);
+  }
+
+  return {
+    utils: {
+      encode_cell: encodeCell,
+      encode_range: encodeRange,
+      decode_range: decodeRange,
+      book_new,
+      book_append_sheet
+    },
+    write
+  };
+})();
 
 // Colour palette
 const C = {
@@ -1152,11 +1546,6 @@ function buildIndexSheet(wb) {
 }
 
 function generateReport() {
-  if (typeof XLSX === 'undefined') {
-    document.getElementById('xlsxLibStatus').style.display = 'block';
-    return;
-  }
-
   showStatus('Generating XLSX workbook…');
   const cfg = readConfig();
 
@@ -1320,11 +1709,6 @@ function initGenerateTab() {
   initDropZone();
   initGenerateTab();
   refreshImportUI();
-
-  // Check xlsx-js-style availability
-  if (typeof XLSX === 'undefined') {
-    document.getElementById('xlsxLibStatus').style.display = 'block';
-  }
 
   // Attempt to restore saved config (without password)
   const raw = localStorage.getItem('storagetools_config');
