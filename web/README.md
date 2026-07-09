@@ -12,7 +12,7 @@ produces a coloured multi-sheet XLSX report.
 |-----------|-------------|
 | Browser   | Any modern browser (Chrome, Edge, Firefox). No server needed — open `index.html` directly. |
 | Windows host | `dsmadmc.exe` from the IBM Storage Protect administrative client package. |
-| XLSX export | Built into `index.html`; no CDN, installation, or companion files required. |
+| XLSX export | Built into `index.html` as a self-contained exporter; no CDN, installation, or companion files required. |
 
 ---
 
@@ -155,6 +155,6 @@ This web helper is an independent addition and does not modify or replace the Pe
 | CMD file opens and closes instantly | Right-click → Run as Administrator, or run from Command Prompt |
 | `dsmadmc.exe` not found | Verify the full path in Setup; use `dir "C:\...\dsmadmc.exe"` to confirm |
 | All output files empty | Check `collection_errors.log`; verify admin credentials and server connectivity |
-| XLSX download button does nothing | Confirm your browser allows downloads from local files and review the browser console for any client-side error |
+| XLSX download button does nothing | Confirm your browser allows downloads from local files and review the browser console for any client-side errors |
 | v8-only queries all fail | Expected on SP v7 and earlier; core queries still succeed |
 | Password with `%` breaks CMD | Double the `%` character in the `SET "ADMPA=..."` line of the CMD file |
