@@ -138,9 +138,15 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
         <input type="password" id="adminPa" placeholder="••••••••">
         <span class="hint">Stored only in this browser tab — never sent anywhere.</span>
       </div>
-      <div class="fg full">
-        <label>Option File Path (optional)</label>
-        <input type="text" id="optfile" placeholder="C:\TSM\dsm.opt  — leave blank if not required">
+      <div class="fg">
+        <label>Windows Option File Path (optional)</label>
+        <input type="text" id="optfileWindows" placeholder="C:\TSM\dsm.opt — leave blank if not required">
+        <span class="hint">Windows <code>dsm.opt</code> path — used only in <code>.cmd</code> scripts.</span>
+      </div>
+      <div class="fg">
+        <label>Unix/Linux Option File Path (optional)</label>
+        <input type="text" id="optfileUnix" placeholder="/opt/tivoli/tsm/client/ba/bin/dsm.opt — leave blank if not required">
+        <span class="hint">Unix/Linux <code>dsm.opt</code> path — used only in <code>.sh</code> scripts.</span>
       </div>
       <div class="fg">
         <label>Server Name / Label</label>
@@ -150,10 +156,15 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
         <label>Customer Name</label>
         <input type="text" id="customerName" placeholder="Acme Corp">
       </div>
-      <div class="fg full">
-        <label>Output directory/path for generated scripts</label>
-        <input type="text" id="outputDir" value="StorageTools_Output">
-        <span class="hint">CSV output folder used by both <code>.cmd</code> and <code>.sh</code> scripts. Relative paths are resolved from where the script runs.</span>
+      <div class="fg">
+        <label>Windows Output Directory</label>
+        <input type="text" id="outputDirWindows" value="StorageTools_Output">
+        <span class="hint">CSV output folder for <code>.cmd</code> scripts. Use backslashes for absolute paths (e.g. <code>C:\TSM\Output</code>).</span>
+      </div>
+      <div class="fg">
+        <label>Unix/Linux Output Directory</label>
+        <input type="text" id="outputDirUnix" value="StorageTools_Output">
+        <span class="hint">CSV output folder for <code>.sh</code> scripts. Use forward slashes for absolute paths (e.g. <code>/tmp/st_output</code>).</span>
       </div>
     </div>
     <div style="margin-top:16px" class="actions">
@@ -663,14 +674,16 @@ const DEFAULT_OUTPUT_DIR      = 'StorageTools_Output';
 
 const STATE = {
   config: {
-    dsmadmcPath: DEFAULT_WINDOWS_DSMADMC,
-    dsmadmcPathUnix: DEFAULT_UNIX_DSMADMC,
-    adminId: '',
-    adminPa: '',
-    optfile: '',
-    serverName: '',
-    customerName: '',
-    outputDir: DEFAULT_OUTPUT_DIR
+    dsmadmcPath     : DEFAULT_WINDOWS_DSMADMC,
+    dsmadmcPathUnix : DEFAULT_UNIX_DSMADMC,
+    adminId         : '',
+    adminPa         : '',
+    optfileWindows  : '',
+    optfileUnix     : '',
+    serverName      : '',
+    customerName    : '',
+    outputDirWindows: DEFAULT_OUTPUT_DIR,
+    outputDirUnix   : DEFAULT_OUTPUT_DIR
   },
   imported: {}   // filename → { name, headers[], rows[][] }
 };
@@ -685,7 +698,6 @@ function escapeForCmd(sql) {
 }
 
 function buildCmdLine(cfg, query) {
-  const dsmPath  = cfg.dsmadmcPath || 'dsmadmc.exe';
   const sql      = escapeForCmd(query.sql);
   const outFile  = `%OUTDIR%\\${query.outputFile}`;
   const errLog   = `%OUTDIR%\\collection_errors.log`;
@@ -732,12 +744,12 @@ function generateCmdContent(type) {
   );
   lines.push(`SET "ADMID=${cfg.adminId || 'ADMINUSER'}"`);
   lines.push(`SET "ADMPA=${cfg.adminPa || 'PASSWORD'}"`);
-  lines.push(`SET "OUTDIR=${cfg.outputDir || DEFAULT_OUTPUT_DIR}"`);
+  lines.push(`SET "OUTDIR=${cfg.outputDirWindows || DEFAULT_OUTPUT_DIR}"`);
   lines.push('');
   lines.push('REM Option file — leave blank if not required');
-  lines.push(`SET "OPTFILE=${cfg.optfile || ''}"`);
+  lines.push(`SET "OPTFILE=${cfg.optfileWindows || ''}"`);
   lines.push('SET "OPTARG="');
-  lines.push('IF NOT "%OPTFILE%"=="" SET "OPTARG=-optfile=\\"%OPTFILE%\\""');
+  lines.push('IF NOT "%OPTFILE%"=="" SET OPTARG=-optfile="%OPTFILE%"');
   lines.push('');
   lines.push('IF NOT EXIST "%OUTDIR%" MKDIR "%OUTDIR%"');
   lines.push('');
@@ -838,8 +850,8 @@ function generateShContent(type) {
   lines.push(`DSMADMC=${shellQuote(cfg.dsmadmcPathUnix || DEFAULT_UNIX_DSMADMC)}`);
   lines.push(`ADMID=${shellQuote(cfg.adminId || 'ADMINUSER')}`);
   lines.push(`ADMPA=${shellQuote(cfg.adminPa || 'PASSWORD')}`);
-  lines.push(`OPTFILE=${shellQuote(cfg.optfile || '')}`);
-  lines.push(`OUTDIR=${shellQuote(cfg.outputDir || DEFAULT_OUTPUT_DIR)}`);
+  lines.push(`OPTFILE=${shellQuote(cfg.optfileUnix || '')}`);
+  lines.push(`OUTDIR=${shellQuote(cfg.outputDirUnix || DEFAULT_OUTPUT_DIR)}`);
   lines.push(`CUSTOMER=${shellQuote(cfg.customerName || '(not set)')}`);
   lines.push(`SERVER=${shellQuote(cfg.serverName || '(not set)')}`);
   lines.push('ERRLOG="$OUTDIR/collection_errors.log"');
@@ -1766,14 +1778,16 @@ function generateReport() {
 
 function readConfig() {
   return {
-    dsmadmcPath  : document.getElementById('dsmadmcPath').value.trim(),
-    dsmadmcPathUnix: document.getElementById('dsmadmcPathUnix').value.trim(),
-    adminId      : document.getElementById('adminId').value.trim(),
-    adminPa      : document.getElementById('adminPa').value,
-    optfile      : document.getElementById('optfile').value.trim(),
-    serverName   : document.getElementById('serverName').value.trim(),
-    customerName : document.getElementById('customerName').value.trim(),
-    outputDir    : document.getElementById('outputDir').value.trim() || DEFAULT_OUTPUT_DIR,
+    dsmadmcPath     : document.getElementById('dsmadmcPath').value.trim(),
+    dsmadmcPathUnix : document.getElementById('dsmadmcPathUnix').value.trim(),
+    adminId         : document.getElementById('adminId').value.trim(),
+    adminPa         : document.getElementById('adminPa').value,
+    optfileWindows  : document.getElementById('optfileWindows').value.trim(),
+    optfileUnix     : document.getElementById('optfileUnix').value.trim(),
+    serverName      : document.getElementById('serverName').value.trim(),
+    customerName    : document.getElementById('customerName').value.trim(),
+    outputDirWindows: document.getElementById('outputDirWindows').value.trim() || DEFAULT_OUTPUT_DIR,
+    outputDirUnix   : document.getElementById('outputDirUnix').value.trim()    || DEFAULT_OUTPUT_DIR,
   };
 }
 
@@ -1792,13 +1806,17 @@ function loadConfig() {
   const raw = localStorage.getItem('storagetools_config');
   if (!raw) { alert('No saved configuration found.'); return; }
   const cfg = JSON.parse(raw);
-  document.getElementById('dsmadmcPath').value  = cfg.dsmadmcPath  || '';
-  document.getElementById('dsmadmcPathUnix').value = cfg.dsmadmcPathUnix || DEFAULT_UNIX_DSMADMC;
-  document.getElementById('adminId').value       = cfg.adminId      || '';
-  document.getElementById('optfile').value       = cfg.optfile      || '';
-  document.getElementById('serverName').value    = cfg.serverName   || '';
-  document.getElementById('customerName').value  = cfg.customerName || '';
-  document.getElementById('outputDir').value     = cfg.outputDir    || DEFAULT_OUTPUT_DIR;
+  document.getElementById('dsmadmcPath').value       = cfg.dsmadmcPath      || '';
+  document.getElementById('dsmadmcPathUnix').value   = cfg.dsmadmcPathUnix   || DEFAULT_UNIX_DSMADMC;
+  document.getElementById('adminId').value           = cfg.adminId            || '';
+  // Backward compat: old shared 'optfile' maps to Windows option file
+  document.getElementById('optfileWindows').value    = cfg.optfileWindows    || cfg.optfile || '';
+  document.getElementById('optfileUnix').value       = cfg.optfileUnix       || '';
+  document.getElementById('serverName').value        = cfg.serverName        || '';
+  document.getElementById('customerName').value      = cfg.customerName      || '';
+  // Backward compat: old shared 'outputDir' maps to both platform directories
+  document.getElementById('outputDirWindows').value  = cfg.outputDirWindows  || cfg.outputDir || DEFAULT_OUTPUT_DIR;
+  document.getElementById('outputDirUnix').value     = cfg.outputDirUnix     || cfg.outputDir || DEFAULT_OUTPUT_DIR;
   const el = document.getElementById('configStatus');
   el.textContent = 'Settings loaded. Please re-enter your password.';
   el.style.display = 'block';
@@ -1874,13 +1892,19 @@ function initGenerateTab() {
   if (raw) {
     try {
       const cfg = JSON.parse(raw);
-      if (cfg.dsmadmcPath)  document.getElementById('dsmadmcPath').value  = cfg.dsmadmcPath;
+      if (cfg.dsmadmcPath)    document.getElementById('dsmadmcPath').value    = cfg.dsmadmcPath;
       if (cfg.dsmadmcPathUnix) document.getElementById('dsmadmcPathUnix').value = cfg.dsmadmcPathUnix;
-      if (cfg.adminId)      document.getElementById('adminId').value       = cfg.adminId;
-      if (cfg.optfile)      document.getElementById('optfile').value       = cfg.optfile;
-      if (cfg.serverName)   document.getElementById('serverName').value    = cfg.serverName;
-      if (cfg.customerName) document.getElementById('customerName').value  = cfg.customerName;
-      if (cfg.outputDir)    document.getElementById('outputDir').value     = cfg.outputDir;
+      if (cfg.adminId)        document.getElementById('adminId').value         = cfg.adminId;
+      // Backward compat: old shared 'optfile' maps to Windows option file
+      const savedOptWin = cfg.optfileWindows || cfg.optfile;
+      if (savedOptWin)        document.getElementById('optfileWindows').value   = savedOptWin;
+      if (cfg.optfileUnix)    document.getElementById('optfileUnix').value      = cfg.optfileUnix;
+      if (cfg.serverName)     document.getElementById('serverName').value       = cfg.serverName;
+      if (cfg.customerName)   document.getElementById('customerName').value     = cfg.customerName;
+      // Backward compat: old shared 'outputDir' maps to both platform directories
+      const savedOutDir = cfg.outputDir || DEFAULT_OUTPUT_DIR;
+      document.getElementById('outputDirWindows').value = cfg.outputDirWindows || savedOutDir;
+      document.getElementById('outputDirUnix').value    = cfg.outputDirUnix    || savedOutDir;
     } catch(e) { /* ignore */ }
   }
 })();
