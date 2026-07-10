@@ -159,7 +159,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       <div class="fg">
         <label>Windows Output Directory</label>
         <input type="text" id="outputDirWindows" value="StorageTools_Output">
-        <span class="hint">CSV output folder for <code>.cmd</code> scripts. Use backslashes for absolute paths (e.g. <code>C:\TSM\Output</code>).</span>
+        <span class="hint">CSV output folder for <code>.cmd</code> scripts. The default <code>StorageTools_Output</code> is a relative path that works without any path-separator concerns. Use backslashes for absolute paths (e.g. <code>C:\TSM\Output</code>).</span>
       </div>
       <div class="fg">
         <label>Unix/Linux Output Directory</label>
@@ -1809,9 +1809,18 @@ function loadConfig() {
   document.getElementById('dsmadmcPath').value       = cfg.dsmadmcPath      || '';
   document.getElementById('dsmadmcPathUnix').value   = cfg.dsmadmcPathUnix   || DEFAULT_UNIX_DSMADMC;
   document.getElementById('adminId').value           = cfg.adminId            || '';
-  // Backward compat: old shared 'optfile' maps to Windows option file
-  document.getElementById('optfileWindows').value    = cfg.optfileWindows    || cfg.optfile || '';
-  document.getElementById('optfileUnix').value       = cfg.optfileUnix       || '';
+  // Backward compat: old shared 'optfile' — detect path style to route correctly.
+  // A path starting with '/' is Unix-style; anything else (drive letter, relative) is Windows-style.
+  if (!cfg.optfileWindows && !cfg.optfileUnix && cfg.optfile) {
+    if (cfg.optfile.startsWith('/')) {
+      document.getElementById('optfileUnix').value    = cfg.optfile;
+    } else {
+      document.getElementById('optfileWindows').value = cfg.optfile;
+    }
+  } else {
+    document.getElementById('optfileWindows').value = cfg.optfileWindows || '';
+    document.getElementById('optfileUnix').value    = cfg.optfileUnix    || '';
+  }
   document.getElementById('serverName').value        = cfg.serverName        || '';
   document.getElementById('customerName').value      = cfg.customerName      || '';
   // Backward compat: old shared 'outputDir' maps to both platform directories
@@ -1895,10 +1904,17 @@ function initGenerateTab() {
       if (cfg.dsmadmcPath)    document.getElementById('dsmadmcPath').value    = cfg.dsmadmcPath;
       if (cfg.dsmadmcPathUnix) document.getElementById('dsmadmcPathUnix').value = cfg.dsmadmcPathUnix;
       if (cfg.adminId)        document.getElementById('adminId').value         = cfg.adminId;
-      // Backward compat: old shared 'optfile' maps to Windows option file
-      const savedOptWin = cfg.optfileWindows || cfg.optfile;
-      if (savedOptWin)        document.getElementById('optfileWindows').value   = savedOptWin;
-      if (cfg.optfileUnix)    document.getElementById('optfileUnix').value      = cfg.optfileUnix;
+      // Backward compat: old shared 'optfile' — detect path style to route correctly.
+      if (!cfg.optfileWindows && !cfg.optfileUnix && cfg.optfile) {
+        if (cfg.optfile.startsWith('/')) {
+          document.getElementById('optfileUnix').value    = cfg.optfile;
+        } else {
+          document.getElementById('optfileWindows').value = cfg.optfile;
+        }
+      } else {
+        if (cfg.optfileWindows) document.getElementById('optfileWindows').value = cfg.optfileWindows;
+        if (cfg.optfileUnix)    document.getElementById('optfileUnix').value    = cfg.optfileUnix;
+      }
       if (cfg.serverName)     document.getElementById('serverName').value       = cfg.serverName;
       if (cfg.customerName)   document.getElementById('customerName').value     = cfg.customerName;
       // Backward compat: old shared 'outputDir' maps to both platform directories
