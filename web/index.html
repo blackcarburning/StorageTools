@@ -749,6 +749,9 @@ function generateCmdContent(type) {
   lines.push('REM Option file — leave blank if not required');
   lines.push(`SET "OPTFILE=${cfg.optfileWindows || ''}"`);
   lines.push('SET "OPTARG="');
+  // Note: intentionally no outer quotes on this SET so that the inner quotes around
+  // %OPTFILE% are preserved in the OPTARG value at expansion time (CMD idiom for
+  // embedding a quoted path in a variable without \"  escapes, which are invalid here).
   lines.push('IF NOT "%OPTFILE%"=="" SET OPTARG=-optfile="%OPTFILE%"');
   lines.push('');
   lines.push('IF NOT EXIST "%OUTDIR%" MKDIR "%OUTDIR%"');
@@ -1776,6 +1779,19 @@ function generateReport() {
 // CONFIG  — read/write form values + localStorage persistence
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Returns true when a path looks like a Unix/Linux path.
+ * Windows indicators (drive letter C:\, UNC \\server\, leading backslash)
+ * take priority; only a leading '/' is treated as Unix.
+ */
+function isUnixPath(p) {
+  if (!p) return false;
+  if (/^[A-Za-z]:[\\\/]/.test(p)) return false; // drive letter, e.g. C:\ or C:/
+  if (/^\\\\/.test(p))             return false; // UNC path \\server\share
+  if (/^\\/.test(p))               return false; // backslash-relative path
+  return p.charAt(0) === '/';
+}
+
 function readConfig() {
   return {
     dsmadmcPath     : document.getElementById('dsmadmcPath').value.trim(),
@@ -1812,7 +1828,7 @@ function loadConfig() {
   // Backward compat: old shared 'optfile' — detect path style to route correctly.
   // A path starting with '/' is Unix-style; anything else (drive letter, relative) is Windows-style.
   if (!cfg.optfileWindows && !cfg.optfileUnix && cfg.optfile) {
-    if (cfg.optfile.startsWith('/')) {
+    if (isUnixPath(cfg.optfile)) {
       document.getElementById('optfileUnix').value    = cfg.optfile;
     } else {
       document.getElementById('optfileWindows').value = cfg.optfile;
@@ -1906,7 +1922,7 @@ function initGenerateTab() {
       if (cfg.adminId)        document.getElementById('adminId').value         = cfg.adminId;
       // Backward compat: old shared 'optfile' — detect path style to route correctly.
       if (!cfg.optfileWindows && !cfg.optfileUnix && cfg.optfile) {
-        if (cfg.optfile.startsWith('/')) {
+        if (isUnixPath(cfg.optfile)) {
           document.getElementById('optfileUnix').value    = cfg.optfile;
         } else {
           document.getElementById('optfileWindows').value = cfg.optfile;
