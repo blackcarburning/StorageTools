@@ -140,12 +140,12 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       </div>
       <div class="fg">
         <label>Windows Option File Path (optional)</label>
-        <input type="text" id="optfileWindows" placeholder="C:\TSM\dsm.opt — leave blank if not required">
+        <input type="text" id="optfileWindows" placeholder="C:\TSM\dsm.opt - leave blank if not required">
         <span class="hint">Windows <code>dsm.opt</code> path — used only in <code>.cmd</code> scripts.</span>
       </div>
       <div class="fg">
         <label>Unix/Linux Option File Path (optional)</label>
-        <input type="text" id="optfileUnix" placeholder="/opt/tivoli/tsm/client/ba/bin/dsm.opt — leave blank if not required">
+        <input type="text" id="optfileUnix" placeholder="/opt/tivoli/tsm/client/ba/bin/dsm.opt - leave blank if not required">
         <span class="hint">Unix/Linux <code>dsm.opt</code> path — used only in <code>.sh</code> scripts.</span>
       </div>
       <div class="fg">
@@ -1786,9 +1786,11 @@ function generateReport() {
  */
 function isUnixPath(p) {
   if (!p) return false;
-  if (/^[A-Za-z]:[\\\/]/.test(p)) return false; // drive letter, e.g. C:\ or C:/
-  if (/^\\\\/.test(p))             return false; // UNC path \\server\share
-  if (/^\\/.test(p))               return false; // backslash-relative path
+  // Windows path indicators (both \ and / separators are valid on Windows):
+  if (/^[A-Za-z]:[\\\/]/.test(p)) return false; // drive letter, e.g. C:\ or C:/ (Windows accepts both)
+  if (/^\\\\/.test(p))             return false; // UNC path, e.g. \\server\share
+  if (/^\\/.test(p))               return false; // drive-relative Windows path, e.g. \folder
+  // Unix indicator: absolute path starting with /
   return p.charAt(0) === '/';
 }
 
