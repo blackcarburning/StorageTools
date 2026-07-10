@@ -104,7 +104,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
 
 <nav>
   <button id="btn-setup"    class="active" onclick="showTab('setup')">1 · Setup</button>
-  <button id="btn-generate"              onclick="showTab('generate')">2 · Generate CMDs</button>
+  <button id="btn-generate"              onclick="showTab('generate')">2 · Generate Scripts</button>
   <button id="btn-import"               onclick="showTab('import')">3 · Import Results</button>
   <button id="btn-report"               onclick="showTab('report')">4 · Report</button>
 </nav>
@@ -120,9 +120,14 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
     <h2>🔧 Connection &amp; Output Configuration</h2>
     <div class="form-grid">
       <div class="fg full">
-        <label>Full path to dsmadmc.exe</label>
+        <label>Windows path to dsmadmc.exe</label>
         <input type="text" id="dsmadmcPath" value="C:\Program Files\Tivoli\TSM\baclient\dsmadmc.exe" placeholder="C:\Program Files\Tivoli\TSM\baclient\dsmadmc.exe">
-        <span class="hint">The administrative command-line client shipped with IBM Storage Protect.</span>
+        <span class="hint">Used when generating Windows <code>.cmd</code> scripts.</span>
+      </div>
+      <div class="fg full">
+        <label>Unix/Linux path to dsmadmc</label>
+        <input type="text" id="dsmadmcPathUnix" value="/opt/tivoli/tsm/client/ba/bin/dsmadmc" placeholder="/opt/tivoli/tsm/client/ba/bin/dsmadmc">
+        <span class="hint">Used when generating Unix/Linux <code>.sh</code> scripts.</span>
       </div>
       <div class="fg">
         <label>Admin User ID</label>
@@ -146,9 +151,9 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
         <input type="text" id="customerName" placeholder="Acme Corp">
       </div>
       <div class="fg full">
-        <label>Output Sub-directory (relative to CMD file location)</label>
+        <label>Output directory/path for generated scripts</label>
         <input type="text" id="outputDir" value="StorageTools_Output">
-        <span class="hint">The CMD script will create this folder next to itself before running.</span>
+        <span class="hint">CSV output folder used by both <code>.cmd</code> and <code>.sh</code> scripts. Relative paths are resolved from where the script runs.</span>
       </div>
     </div>
     <div style="margin-top:16px" class="actions">
@@ -159,8 +164,8 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
   </div>
 
   <div class="alert alert-info">
-    <strong>Workflow:</strong> Fill in the form above → go to <em>Generate CMDs</em> to download the collection scripts →
-    run them on the Windows host that has <code>dsmadmc.exe</code> → return here to <em>Import Results</em> → download the XLSX report.
+    <strong>Workflow:</strong> Fill in the form above → go to <em>Generate Scripts</em> to download the collection scripts →
+    run <code>.cmd</code> on Windows or <code>.sh</code> on Unix/Linux host with <code>dsmadmc</code> → return here to <em>Import Results</em> → download the XLSX report.
   </div>
 
 </div><!-- /tab-setup -->
@@ -172,14 +177,15 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
 <div id="tab-generate" class="tab">
 
   <div class="alert alert-danger">
-    <strong>⚠ Security Warning:</strong> The generated <code>.cmd</code> files will contain your IBM Storage Protect
+    <strong>⚠ Security Warning:</strong> The generated <code>.cmd</code> and <code>.sh</code> files will contain your IBM Storage Protect
     admin password in plain text so that <code>dsmadmc</code> can run unattended.
     <ul style="margin:6px 0 0 18px">
-      <li>Run the script only on a trusted, secured Windows host.</li>
-      <li><strong>Delete the CMD file and output folder</strong> immediately after uploading results into this app.</li>
-      <li>Do not email, share, or store the CMD file in unsecured locations.</li>
+      <li>Run scripts only on trusted, secured hosts with the IBM Storage Protect administrative client installed.</li>
+      <li><strong>Delete generated script files and output folder</strong> immediately after uploading results into this app.</li>
+      <li>Do not email, share, or store generated scripts in unsecured locations.</li>
       <li>Consider resetting the admin password after the collection is complete.</li>
       <li>On Windows, command-line passwords may be visible to local process inspection tools (Task Manager, Sysinternals).</li>
+      <li>On Unix/Linux, command-line arguments may be visible via tools such as <code>ps</code> while a query is running.</li>
     </ul>
   </div>
 
@@ -191,7 +197,10 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       All queries use read-only <code>SELECT</code> statements targeting IBM Storage Protect v8 SQL tables.
     </p>
     <div id="docQueryStats" class="stat-grid"></div>
-    <button class="btn btn-primary" onclick="downloadCmd('doc')">⬇ Download Documentation CMD</button>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="downloadCmd('doc')">⬇ Download Documentation CMD</button>
+      <button class="btn btn-success" onclick="downloadSh('doc')">⬇ Download Documentation SH</button>
+    </div>
   </div>
 
   <div class="card">
@@ -202,18 +211,23 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       migration and reclamation activity, v8 container health and replication statistics.
     </p>
     <div id="hcQueryStats" class="stat-grid"></div>
-    <button class="btn btn-orange" onclick="downloadCmd('hc')">⬇ Download Healthcheck CMD</button>
+    <div class="actions">
+      <button class="btn btn-orange" onclick="downloadCmd('hc')">⬇ Download Healthcheck CMD</button>
+      <button class="btn btn-success" onclick="downloadSh('hc')">⬇ Download Healthcheck SH</button>
+    </div>
   </div>
 
   <div class="card">
     <h2>📝 Usage Notes</h2>
     <ul style="font-size:13px;line-height:1.8;color:#374151;padding-left:18px">
-      <li>Both CMD files are independent — run either or both as needed.</li>
-      <li>Run the CMD file from a Windows Command Prompt (not PowerShell) as a user with network/filesystem access to <code>dsmadmc.exe</code>.</li>
+      <li>Windows <code>.cmd</code> and Unix/Linux <code>.sh</code> files are independent — run either or both as needed.</li>
+      <li>Run <code>.cmd</code> from Windows Command Prompt (not PowerShell) on a host with <code>dsmadmc.exe</code>.</li>
+      <li>Run <code>.sh</code> from a Unix/Linux shell on a host with the administrative client installed, and use <code>chmod +x &lt;script&gt;.sh</code> if needed.</li>
       <li>Each query writes one CSV file to the output sub-directory. Errors are captured to <code>collection_errors.log</code>.</li>
       <li>Queries marked <span class="v8tag">v8</span> target tables introduced in IBM Storage Protect v8 and will silently fail on older servers — this is expected and does not stop the batch.</li>
       <li>If your password contains the characters <code>! ^ &amp; | &lt; &gt; %</code>, see the README for CMD escaping guidance.</li>
       <li>The CSV output format uses comma-delimited values with a column-header row on line 1.</li>
+      <li>IBM documentation reference for server utilities and admin client options: <a href="https://www.ibm.com/docs/en/storage-protect/8.1.27?topic=servers-server-commands-options-utilities" target="_blank" rel="noopener noreferrer">Server commands, options, and utilities</a>.</li>
     </ul>
   </div>
 
@@ -230,11 +244,11 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
       <div class="dz-icon">📂</div>
       <p><strong>Click to select files</strong> or drag-and-drop</p>
-      <p>Select all <code>.csv</code> files from the <code>StorageTools_Output</code> folder.</p>
+      <p>Select all <code>.csv</code> files from the configured script output folder.</p>
       <input type="file" id="fileInput" multiple accept=".csv,.txt" style="display:none" onchange="handleFiles(this.files)">
     </div>
     <div id="importSummary" class="alert alert-info" style="margin-top:12px">
-      No files imported yet. Run the CMD files on your Windows host then select the output files here.
+      No files imported yet. Run the generated scripts then select the output files here.
     </div>
   </div>
 
@@ -643,15 +657,20 @@ const HEALTH_QUERIES = [
 // APPLICATION STATE
 // ═══════════════════════════════════════════════════════════════════════════
 
+const DEFAULT_WINDOWS_DSMADMC = 'C:\\Program Files\\Tivoli\\TSM\\baclient\\dsmadmc.exe';
+const DEFAULT_UNIX_DSMADMC    = '/opt/tivoli/tsm/client/ba/bin/dsmadmc';
+const DEFAULT_OUTPUT_DIR      = 'StorageTools_Output';
+
 const STATE = {
   config: {
-    dsmadmcPath: 'C:\\Program Files\\Tivoli\\TSM\\baclient\\dsmadmc.exe',
+    dsmadmcPath: DEFAULT_WINDOWS_DSMADMC,
+    dsmadmcPathUnix: DEFAULT_UNIX_DSMADMC,
     adminId: '',
     adminPa: '',
     optfile: '',
     serverName: '',
     customerName: '',
-    outputDir: 'StorageTools_Output'
+    outputDir: DEFAULT_OUTPUT_DIR
   },
   imported: {}   // filename → { name, headers[], rows[][] }
 };
@@ -709,11 +728,11 @@ function generateCmdContent(type) {
   lines.push('setlocal');
   lines.push('');
   lines.push(
-    `SET "DSMADMC=${cfg.dsmadmcPath || 'C:\\Program Files\\Tivoli\\TSM\\baclient\\dsmadmc.exe'}"`
+    `SET "DSMADMC=${cfg.dsmadmcPath || DEFAULT_WINDOWS_DSMADMC}"`
   );
   lines.push(`SET "ADMID=${cfg.adminId || 'ADMINUSER'}"`);
   lines.push(`SET "ADMPA=${cfg.adminPa || 'PASSWORD'}"`);
-  lines.push(`SET "OUTDIR=${cfg.outputDir || 'StorageTools_Output'}"`);
+  lines.push(`SET "OUTDIR=${cfg.outputDir || DEFAULT_OUTPUT_DIR}"`);
   lines.push('');
   lines.push('REM Option file — leave blank if not required');
   lines.push(`SET "OPTFILE=${cfg.optfile || ''}"`);
@@ -776,6 +795,117 @@ function downloadCmd(type) {
   const server   = (cfg.serverName || 'SERVER').replace(/[^A-Za-z0-9_-]/g, '_');
   const filename = `StorageTools_${label}_${server}.cmd`;
   downloadText(content, filename, 'text/plain');
+  showStatus(`Downloaded ${filename}`);
+}
+
+/** Quote arbitrary text as a single POSIX shell token. */
+function shellQuote(value) {
+  const s = String(value ?? '');
+  return "'" + s.replace(/'/g, "'\"'\"'") + "'";
+}
+
+function buildShLine(query) {
+  const sql = shellQuote(query.sql);
+  return `run_dsmadmc ${sql} > "$OUTDIR/${query.outputFile}" 2>>"$ERRLOG"`;
+}
+
+function generateShContent(type) {
+  const cfg     = readConfig();
+  const queries = type === 'doc' ? DOC_QUERIES : HEALTH_QUERIES;
+  const label   = type === 'doc' ? 'Documentation' : 'Healthcheck';
+  const total   = queries.length;
+  const now     = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+  const lines = [];
+
+  lines.push('#!/bin/sh');
+  lines.push('# =================================================================');
+  lines.push(`# IBM Storage Protect v8 — ${label} Collection Script`);
+  lines.push('# Generated by StorageTools Web Helper');
+  lines.push(`# Customer  : ${cfg.customerName || '(not set)'}`);
+  lines.push(`# Server    : ${cfg.serverName   || '(not set)'}`);
+  lines.push(`# Generated : ${now} (UTC)`);
+  lines.push('# =================================================================');
+  lines.push('# SECURITY WARNING');
+  lines.push('# This file contains your IBM Storage Protect admin password in plain text.');
+  lines.push('# Run only on trusted hosts, then delete this script immediately after use.');
+  lines.push('# On Unix/Linux, command-line arguments may be visible while commands run.');
+  lines.push('# If needed: chmod +x this_script.sh');
+  lines.push('# IBM documentation reference:');
+  lines.push('# https://www.ibm.com/docs/en/storage-protect/8.1.27?topic=servers-server-commands-options-utilities');
+  lines.push('# =================================================================');
+  lines.push('');
+  lines.push(`DSMADMC=${shellQuote(cfg.dsmadmcPathUnix || DEFAULT_UNIX_DSMADMC)}`);
+  lines.push(`ADMID=${shellQuote(cfg.adminId || 'ADMINUSER')}`);
+  lines.push(`ADMPA=${shellQuote(cfg.adminPa || 'PASSWORD')}`);
+  lines.push(`OPTFILE=${shellQuote(cfg.optfile || '')}`);
+  lines.push(`OUTDIR=${shellQuote(cfg.outputDir || DEFAULT_OUTPUT_DIR)}`);
+  lines.push(`CUSTOMER=${shellQuote(cfg.customerName || '(not set)')}`);
+  lines.push(`SERVER=${shellQuote(cfg.serverName || '(not set)')}`);
+  lines.push('ERRLOG="$OUTDIR/collection_errors.log"');
+  lines.push('');
+  lines.push('mkdir -p "$OUTDIR"');
+  lines.push('');
+  lines.push('echo "================================================================="');
+  lines.push(`echo "IBM Storage Protect — ${label} Collection"`);
+  lines.push('echo "Customer : $CUSTOMER"');
+  lines.push('echo "Server   : $SERVER"');
+  lines.push('echo "================================================================="');
+  lines.push('echo "Started: $(date)"');
+  lines.push('echo "Output : $OUTDIR"');
+  lines.push('echo');
+  lines.push('');
+  lines.push(`printf '%s\\n' "$(date) — ${label} collection started" > "$OUTDIR/collection_log.txt"`);
+  lines.push(`printf '%s\\n' "Customer: $CUSTOMER" >> "$OUTDIR/collection_log.txt"`);
+  lines.push(`printf '%s\\n' "Server  : $SERVER" >> "$OUTDIR/collection_log.txt"`);
+  lines.push('');
+  lines.push('run_dsmadmc() {');
+  lines.push('  if [ -n "$OPTFILE" ]; then');
+  lines.push('    "$DSMADMC" -id="$ADMID" -pa="$ADMPA" -optfile="$OPTFILE" -commadelimited "$1"');
+  lines.push('  else');
+  lines.push('    "$DSMADMC" -id="$ADMID" -pa="$ADMPA" -commadelimited "$1"');
+  lines.push('  fi');
+  lines.push('}');
+  lines.push('');
+
+  queries.forEach((q, idx) => {
+    const num = String(idx + 1).padStart(2, '0');
+    const v8note = q.v8only ? ' [v8 only — may fail on older servers]' : '';
+    lines.push(`# ── [${num}/${total}] ${q.title}${v8note} ──`);
+    if (q.v8only) {
+      lines.push('# Table may not exist on pre-v8 servers; failure captured to errors log.');
+    }
+    lines.push(`echo "[${num}/${total}] ${q.title}${v8note}..."`);
+    lines.push(buildShLine(q));
+    lines.push('');
+  });
+
+  lines.push('echo');
+  lines.push('echo "================================================================="');
+  lines.push(`echo "${label} collection complete: $(date)"`);
+  lines.push('echo "Results saved to: $OUTDIR"');
+  lines.push('echo');
+  lines.push('echo "Review $ERRLOG for any query failures."');
+  lines.push('echo');
+  lines.push('echo "*** REMINDER: Delete this SH file after generating your report! ***"');
+  lines.push('echo "================================================================="');
+  lines.push('');
+  lines.push(`printf '%s\\n' "$(date) — collection complete" >> "$OUTDIR/collection_log.txt"`);
+
+  return lines.join('\n');
+}
+
+function downloadSh(type) {
+  const cfg = readConfig();
+  if (!cfg.adminId) {
+    alert('Please enter an Admin User ID on the Setup tab before generating script files.');
+    showTab('setup'); return;
+  }
+  const content  = generateShContent(type);
+  const label    = type === 'doc' ? 'Documentation' : 'Healthcheck';
+  const server   = (cfg.serverName || 'SERVER').replace(/[^A-Za-z0-9_-]/g, '_');
+  const filename = `StorageTools_${label}_${server}.sh`;
+  downloadText(content, filename, 'text/x-shellscript');
   showStatus(`Downloaded ${filename}`);
 }
 
@@ -1637,12 +1767,13 @@ function generateReport() {
 function readConfig() {
   return {
     dsmadmcPath  : document.getElementById('dsmadmcPath').value.trim(),
+    dsmadmcPathUnix: document.getElementById('dsmadmcPathUnix').value.trim(),
     adminId      : document.getElementById('adminId').value.trim(),
     adminPa      : document.getElementById('adminPa').value,
     optfile      : document.getElementById('optfile').value.trim(),
     serverName   : document.getElementById('serverName').value.trim(),
     customerName : document.getElementById('customerName').value.trim(),
-    outputDir    : document.getElementById('outputDir').value.trim() || 'StorageTools_Output',
+    outputDir    : document.getElementById('outputDir').value.trim() || DEFAULT_OUTPUT_DIR,
   };
 }
 
@@ -1662,11 +1793,12 @@ function loadConfig() {
   if (!raw) { alert('No saved configuration found.'); return; }
   const cfg = JSON.parse(raw);
   document.getElementById('dsmadmcPath').value  = cfg.dsmadmcPath  || '';
+  document.getElementById('dsmadmcPathUnix').value = cfg.dsmadmcPathUnix || DEFAULT_UNIX_DSMADMC;
   document.getElementById('adminId').value       = cfg.adminId      || '';
   document.getElementById('optfile').value       = cfg.optfile      || '';
   document.getElementById('serverName').value    = cfg.serverName   || '';
   document.getElementById('customerName').value  = cfg.customerName || '';
-  document.getElementById('outputDir').value     = cfg.outputDir    || 'StorageTools_Output';
+  document.getElementById('outputDir').value     = cfg.outputDir    || DEFAULT_OUTPUT_DIR;
   const el = document.getElementById('configStatus');
   el.textContent = 'Settings loaded. Please re-enter your password.';
   el.style.display = 'block';
@@ -1743,6 +1875,7 @@ function initGenerateTab() {
     try {
       const cfg = JSON.parse(raw);
       if (cfg.dsmadmcPath)  document.getElementById('dsmadmcPath').value  = cfg.dsmadmcPath;
+      if (cfg.dsmadmcPathUnix) document.getElementById('dsmadmcPathUnix').value = cfg.dsmadmcPathUnix;
       if (cfg.adminId)      document.getElementById('adminId').value       = cfg.adminId;
       if (cfg.optfile)      document.getElementById('optfile').value       = cfg.optfile;
       if (cfg.serverName)   document.getElementById('serverName').value    = cfg.serverName;
