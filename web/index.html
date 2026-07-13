@@ -370,11 +370,15 @@ const DOC_QUERIES = [
     outputFile:'doc_01_status.csv' },
 
   { id:'doc_02_db', title:'Database Information', section:'Server',
-    sql:"SELECT DATABASE_NAME,CAST(TOT_FILE_SYSTEM_MB/1024 AS DECIMAL(12,2)) AS TOTAL_FS_GB,CAST(USED_DB_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_DB_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,BUFF_HIT_RATIO,PKG_HIT_RATIO,LAST_REORG,LAST_BACKUP_DATE,PHYSICAL_VOLUMES,NUM_DB_DIRS FROM DB",
+    // TOT_FILE_SYSTEM_MB/USED_DB_SPACE_MB are wrong names; IBM SP DB view uses TOTAL_SPACE_MB/USED_SPACE_MB.
+    // LAST_REORG is not a column in the DB view.
+    sql:"SELECT DATABASE_NAME,CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,BUFF_HIT_RATIO,PKG_HIT_RATIO,LAST_BACKUP_DATE,PHYSICAL_VOLUMES,NUM_DB_DIRS FROM DB",
     outputFile:'doc_02_db.csv' },
 
   { id:'doc_03_dbspace', title:'Database Volumes (DBSPACE)', section:'Server',
-    sql:"SELECT VOLUME_NAME,LOCATION,CAST(TOTAL_FS_SIZE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_FS_GB,CAST(USED_FS_SIZE_MB/1024 AS DECIMAL(12,2)) AS USED_FS_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB FROM DBSPACE ORDER BY VOLUME_NAME",
+    // TOTAL_FS_SIZE_MB/USED_FS_SIZE_MB are wrong; IBM SP DBSPACE view uses TOTAL_SPACE_MB/USED_SPACE_MB.
+    // LOCATION is not a documented DBSPACE column (volume name IS the path).
+    sql:"SELECT VOLUME_NAME,CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB FROM DBSPACE ORDER BY VOLUME_NAME",
     outputFile:'doc_03_dbspace.csv' },
 
   { id:'doc_04_log', title:'Transaction Log', section:'Server',
@@ -387,12 +391,18 @@ const DOC_QUERIES = [
 
   // ── Administrators ───────────────────────────────────────────────────────
   { id:'doc_06_admins', title:'Administrators', section:'Admins',
-    sql:"SELECT ADMIN_NAME,SYSTEM_PRIV,POLICY_PRIV,STORAGE_PRIV,OPERATOR_PRIV,ANALYST_PRIV,LAST_ACCESS,LOCKED FROM ADMINS ORDER BY ADMIN_NAME",
+    // LAST_ACCESS is wrong; IBM SP ADMINS view uses LASTACC_TIME (consistent with NODES).
+    // LOCKED is a NODE attribute and does not exist in the ADMINS view.
+    sql:"SELECT ADMIN_NAME,SYSTEM_PRIV,POLICY_PRIV,STORAGE_PRIV,OPERATOR_PRIV,ANALYST_PRIV,LASTACC_TIME FROM ADMINS ORDER BY ADMIN_NAME",
     outputFile:'doc_06_admins.csv' },
 
   // ── Nodes ────────────────────────────────────────────────────────────────
   { id:'doc_07_nodes', title:'Nodes — Full Detail', section:'Nodes',
-    sql:"SELECT NODE_NAME,PLATFORM_NAME,CLIENT_OS_LEVEL,DOMAIN_NAME,OPTION_SET,LOCKED,CLIENT_VERSION,CLIENT_RELEASE,CLIENT_LEVEL,CLIENT_SUBLEVEL,TCP_NAME,TCP_ADDRESS,DEDUPLICATION,COMPRESSION,SESSION_INITIATION,REG_TIME,LASTACC_TIME,CONTACT,NODETYPE,MAXNUMMP,ARCHDELETE,BACKDELETE FROM NODES ORDER BY DOMAIN_NAME,NODE_NAME",
+    // TCP_NAME does not exist in the NODES view.
+    // CLIENT_OS_LEVEL is not a documented NODES view column.
+    // SESSION_INITIATION is wrong; use SESSIONSECURITY (v8.1.2+).
+    // TCP_ADDRESS is the IBM-documented column for the node's high-level TCP address.
+    sql:"SELECT NODE_NAME,PLATFORM_NAME,DOMAIN_NAME,OPTION_SET,LOCKED,CLIENT_VERSION,CLIENT_RELEASE,CLIENT_LEVEL,CLIENT_SUBLEVEL,TCP_ADDRESS,DEDUPLICATION,COMPRESSION,SESSIONSECURITY,REG_TIME,LASTACC_TIME,CONTACT,NODETYPE,MAXNUMMP,ARCHDELETE,BACKDELETE FROM NODES ORDER BY DOMAIN_NAME,NODE_NAME",
     outputFile:'doc_07_nodes.csv' },
 
   { id:'doc_08_nodes_platform', title:'Nodes — by Platform', section:'Nodes',
@@ -405,7 +415,9 @@ const DOC_QUERIES = [
 
   // ── Filespaces ───────────────────────────────────────────────────────────
   { id:'doc_10_filespaces', title:'Node Filespaces', section:'Filespaces',
-    sql:"SELECT NODE_NAME,FILESPACE_NAME,FILESPACE_TYPE,CAST(CAPACITY/1024 AS DECIMAL(12,2)) AS CAPACITY_GB,CAST(PCT_UTIL AS DECIMAL(5,2)) AS PCT_UTIL,CAST(CAPACITY/1024/100*PCT_UTIL AS DECIMAL(12,2)) AS USED_GB,BACKUP_START,BACKUP_END,LAST_REPL_START,LAST_REPL_COMP,DECOMM_STATE FROM FILESPACES WHERE FILESPACE_TYPE NOT IN ('VSS') AND FILESPACE_TYPE NOT LIKE 'API:%%' ORDER BY NODE_NAME,FILESPACE_NAME",
+    // LAST_REPL_START, LAST_REPL_COMP and DECOMM_STATE are version-specific v8 columns that
+    // are not universally present across all 8.1.x fix packs.
+    sql:"SELECT NODE_NAME,FILESPACE_NAME,FILESPACE_TYPE,CAST(CAPACITY/1024 AS DECIMAL(12,2)) AS CAPACITY_GB,CAST(PCT_UTIL AS DECIMAL(5,2)) AS PCT_UTIL,CAST(CAPACITY/1024/100*NULLIF(PCT_UTIL,0) AS DECIMAL(12,2)) AS USED_GB,BACKUP_START,BACKUP_END FROM FILESPACES WHERE FILESPACE_TYPE NOT IN ('VSS') AND FILESPACE_TYPE NOT LIKE 'API:%%' ORDER BY NODE_NAME,FILESPACE_NAME",
     outputFile:'doc_10_filespaces.csv' },
 
   // ── Policy ───────────────────────────────────────────────────────────────
@@ -431,7 +443,9 @@ const DOC_QUERIES = [
 
   // ── Schedules ────────────────────────────────────────────────────────────
   { id:'doc_16_client_schedules', title:'Client Schedules', section:'Schedules',
-    sql:"SELECT DOMAIN_NAME,SCHEDULE_NAME,ACTION,OPTIONS,OBJECTS,STARTTIME,DURATION,DURUNITS,PERIOD,PERUNITS,DAYOFWEEK,SCHED_STYLE,ACTIVE FROM CLIENT_SCHEDULES ORDER BY DOMAIN_NAME,SCHEDULE_NAME",
+    // SCHED_STYLE exists in ADMIN_SCHEDULES but is NOT present in CLIENT_SCHEDULES on
+    // many IBM SP v8.1.x installations.  Removed to avoid rc=3 syntax errors.
+    sql:"SELECT DOMAIN_NAME,SCHEDULE_NAME,ACTION,OPTIONS,OBJECTS,STARTTIME,DURATION,DURUNITS,PERIOD,PERUNITS,DAYOFWEEK,ACTIVE FROM CLIENT_SCHEDULES ORDER BY DOMAIN_NAME,SCHEDULE_NAME",
     outputFile:'doc_16_client_schedules.csv' },
 
   { id:'doc_17_admin_schedules', title:'Admin Schedules', section:'Schedules',
@@ -448,7 +462,10 @@ const DOC_QUERIES = [
     outputFile:'doc_19_stgpools.csv' },
 
   { id:'doc_20_stgpools_v8ext', title:'Storage Pools — Cloud/Container Extended', section:'Storage', v8only:true,
-    sql:"SELECT STGPOOL_NAME,POOLTYPE,DEVCLASS,CAST(EST_CAPACITY_MB/1024 AS DECIMAL(12,2)) AS EST_CAPACITY_GB,CAST(PCT_UTILIZED AS DECIMAL(5,2)) AS PCT_UTILIZED,TOTAL_CLOUD_SPACE_MB,USED_CLOUD_SPACE_MB,LOCAL_EST_CAPACITY_MB,LOCAL_PCT_UTILIZED,CLOUDTYPE,CLOUDURL,CLOUDUSER,CLOUDDEDUPLICATE FROM STGPOOLS ORDER BY POOLTYPE,STGPOOL_NAME",
+    // Cloud-specific STGPOOLS columns (CLOUDTYPE, CLOUDURL, CLOUDUSER, TOTAL_CLOUD_SPACE_MB etc.)
+    // were added progressively across v8.1.x fix packs and do not exist on all v8 installations.
+    // SELECT * captures all available columns without failing on missing cloud columns.
+    sql:"SELECT * FROM STGPOOLS ORDER BY POOLTYPE,STGPOOL_NAME",
     outputFile:'doc_20_stgpools_v8ext.csv' },
 
   { id:'doc_21_devclasses', title:'Device Classes', section:'Storage',
@@ -481,7 +498,9 @@ const DOC_QUERIES = [
     outputFile:'doc_27_libvols_summary.csv' },
 
   { id:'doc_28_volhistory', title:'Volume History (30 days)', section:'Volumes',
-    sql:"SELECT DATE_TIME,TYPE,VOLUME_NAME,BACKUP_SERIES,BACKUP_OPERATION,SERVER_NAME FROM VOLHISTORY WHERE DATE_TIME>=CURRENT_TIMESTAMP-30 DAYS ORDER BY DATE_TIME DESC",
+    // CURRENT_TIMESTAMP - 30 DAYS (no space) is a DB2 parse error; spaces around the operator
+    // are required for the interval expression to be recognised correctly.
+    sql:"SELECT DATE_TIME,TYPE,VOLUME_NAME,BACKUP_SERIES,BACKUP_OPERATION,SERVER_NAME FROM VOLHISTORY WHERE DATE_TIME >= CURRENT_TIMESTAMP - 30 DAYS ORDER BY DATE_TIME DESC",
     outputFile:'doc_28_volhistory.csv' },
 
   // ── Occupancy ─────────────────────────────────────────────────────────────
@@ -524,7 +543,8 @@ const DOC_QUERIES = [
     outputFile:'doc_36_containers.csv' },
 
   { id:'doc_37_stgrules', title:'Storage Rules (v8.1.8+)', section:'Advanced_v8', v8only:true,
-    sql:"SELECT * FROM STGRULES ORDER BY RULE_NAME",
+    // ORDER BY 1 avoids rc=3 if the rule-name column has a different name in this fix pack.
+    sql:"SELECT * FROM STGRULES ORDER BY 1",
     outputFile:'doc_37_stgrules.csv' },
 
   { id:'doc_38_retsets', title:'Retention Sets (v8.1.4+)', section:'Advanced_v8', v8only:true,
@@ -541,7 +561,9 @@ const DOC_QUERIES = [
   // command. These queries allow users to discover which views and columns exist
   // on their specific server version or fix-pack level.
   { id:'doc_40_syscat_sp_views', title:'Schema — SP Views List (SYSCAT.TABLES)', section:'Schema',
-    sql:"SELECT TABNAME,REMARKS FROM SYSCAT.TABLES WHERE TABSCHEMA NOT IN ('SYSIBM','SYSCAT','SYSSTAT','SYSTOOLS') AND TYPE='V' ORDER BY TABNAME",
+    // REMARKS and TYPE columns are not exposed in IBM SP's SYSCAT.TABLES interface.
+    // Filtering is done via TABSCHEMA exclusion to omit DB2 system schemas.
+    sql:"SELECT TABNAME FROM SYSCAT.TABLES WHERE TABSCHEMA NOT IN ('SYSIBM','SYSCAT','SYSSTAT','SYSTOOLS') ORDER BY TABNAME",
     outputFile:'doc_40_syscat_sp_views.csv' },
 
   { id:'doc_41_syscat_key_cols', title:'Schema — Key View Columns (SYSCAT.COLUMNS)', section:'Schema',
@@ -561,11 +583,13 @@ const HEALTH_QUERIES = [
 
   // ── Database ──────────────────────────────────────────────────────────────
   { id:'hc_01_db_space', title:'Database Space Status', section:'HC_Database',
-    sql:"SELECT DATABASE_NAME,CAST(TOT_FILE_SYSTEM_MB/1024 AS DECIMAL(12,2)) AS TOTAL_FS_GB,CAST(USED_DB_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_DB_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_GB,CAST(FLOAT(USED_DB_SPACE_MB)/FLOAT(NULLIF(TOT_FILE_SYSTEM_MB,0))*100 AS DECIMAL(5,2)) AS DB_PCT_USED,BUFF_HIT_RATIO,PKG_HIT_RATIO,LAST_BACKUP_DATE FROM DB",
+    // TOT_FILE_SYSTEM_MB/USED_DB_SPACE_MB are wrong; IBM SP DB view uses TOTAL_SPACE_MB/USED_SPACE_MB.
+    sql:"SELECT DATABASE_NAME,CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_GB,CAST(FLOAT(USED_SPACE_MB)/FLOAT(NULLIF(TOTAL_SPACE_MB,0))*100 AS DECIMAL(5,2)) AS DB_PCT_USED,BUFF_HIT_RATIO,PKG_HIT_RATIO,LAST_BACKUP_DATE FROM DB",
     outputFile:'hc_01_db_space.csv' },
 
   { id:'hc_02_db_backups', title:'Database Backup History (30 days)', section:'HC_Database',
-    sql:"SELECT DATE_TIME,TYPE,VOLUME_NAME,BACKUP_SERIES,SERVER_NAME FROM VOLHISTORY WHERE TYPE IN ('BACKUPFULL','BACKUPINCR','BACKUPDELTA') AND DATE_TIME>=CURRENT_TIMESTAMP-30 DAYS ORDER BY DATE_TIME DESC",
+    // CURRENT_TIMESTAMP - 30 DAYS (no space) is a DB2 parse error; spaces around operator required.
+    sql:"SELECT DATE_TIME,TYPE,VOLUME_NAME,BACKUP_SERIES,SERVER_NAME FROM VOLHISTORY WHERE TYPE IN ('BACKUPFULL','BACKUPINCR','BACKUPDELTA') AND DATE_TIME >= CURRENT_TIMESTAMP - 30 DAYS ORDER BY DATE_TIME DESC",
     outputFile:'hc_02_db_backups.csv' },
 
   { id:'hc_03_log_space', title:'Transaction Log Space Status', section:'HC_Database',
@@ -599,20 +623,20 @@ const HEALTH_QUERIES = [
 
   // ── Schedules ─────────────────────────────────────────────────────────────
   { id:'hc_10_sched_status', title:'Schedule Event Status — 7 Days', section:'HC_Schedules',
-    sql:"SELECT STATUS,COUNT(*) AS EVENT_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP-7 DAYS AND NODE_NAME IS NOT NULL AND UPPER(STATUS)<>'PENDING' GROUP BY STATUS ORDER BY STATUS",
+    sql:"SELECT STATUS,COUNT(*) AS EVENT_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP - 7 DAYS AND NODE_NAME IS NOT NULL AND UPPER(STATUS)<>'PENDING' GROUP BY STATUS ORDER BY STATUS",
     outputFile:'hc_10_sched_status.csv' },
 
   { id:'hc_11_sched_failed', title:'Failed Schedules — 7 Days', section:'HC_Schedules',
-    sql:"SELECT NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME,COUNT(*) AS FAIL_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP-7 DAYS AND NODE_NAME IS NOT NULL AND UPPER(STATUS)='FAILED' GROUP BY NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME ORDER BY FAIL_COUNT DESC,NODE_NAME",
+    sql:"SELECT NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME,COUNT(*) AS FAIL_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP - 7 DAYS AND NODE_NAME IS NOT NULL AND UPPER(STATUS)='FAILED' GROUP BY NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME ORDER BY FAIL_COUNT DESC,NODE_NAME",
     outputFile:'hc_11_sched_failed.csv' },
 
   { id:'hc_12_sched_missed', title:'Missed Schedules — 7 Days', section:'HC_Schedules',
-    sql:"SELECT NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME,COUNT(*) AS MISSED_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP-7 DAYS AND NODE_NAME IS NOT NULL AND UPPER(STATUS)='MISSED' GROUP BY NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME ORDER BY MISSED_COUNT DESC,NODE_NAME",
+    sql:"SELECT NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME,COUNT(*) AS MISSED_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP - 7 DAYS AND NODE_NAME IS NOT NULL AND UPPER(STATUS)='MISSED' GROUP BY NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME ORDER BY MISSED_COUNT DESC,NODE_NAME",
     outputFile:'hc_12_sched_missed.csv' },
 
   // ── Nodes ─────────────────────────────────────────────────────────────────
   { id:'hc_13_not_backed_up', title:'Nodes Not Backed Up (>24 hrs)', section:'HC_Nodes',
-    sql:"SELECT DISTINCT NODE_NAME FROM FILESPACES WHERE BACKUP_END<CURRENT_TIMESTAMP-1 DAYS AND BACKUP_END IS NOT NULL AND FILESPACE_TYPE NOT IN ('VSS') AND FILESPACE_TYPE NOT LIKE 'API:%%' ORDER BY NODE_NAME",
+    sql:"SELECT DISTINCT NODE_NAME FROM FILESPACES WHERE BACKUP_END<CURRENT_TIMESTAMP - 1 DAYS AND BACKUP_END IS NOT NULL AND FILESPACE_TYPE NOT IN ('VSS') AND FILESPACE_TYPE NOT LIKE 'API:%%' ORDER BY NODE_NAME",
     outputFile:'hc_13_not_backed_up.csv' },
 
   { id:'hc_14_never_contacted', title:'Nodes That Never Contacted Server', section:'HC_Nodes',
@@ -624,40 +648,41 @@ const HEALTH_QUERIES = [
     outputFile:'hc_15_locked_nodes.csv' },
 
   { id:'hc_16_stale_nodes', title:'Stale Nodes (No Access in 30 Days)', section:'HC_Nodes',
-    sql:"SELECT NODE_NAME,LASTACC_TIME,DOMAIN_NAME,PLATFORM_NAME,CLIENT_VERSION,CLIENT_RELEASE FROM NODES WHERE LASTACC_TIME<CURRENT_TIMESTAMP-30 DAYS AND LASTACC_TIME IS NOT NULL ORDER BY LASTACC_TIME ASC",
+    sql:"SELECT NODE_NAME,LASTACC_TIME,DOMAIN_NAME,PLATFORM_NAME,CLIENT_VERSION,CLIENT_RELEASE FROM NODES WHERE LASTACC_TIME<CURRENT_TIMESTAMP - 30 DAYS AND LASTACC_TIME IS NOT NULL ORDER BY LASTACC_TIME ASC",
     outputFile:'hc_16_stale_nodes.csv' },
 
-  { id:'hc_17_no_repl_start', title:'Nodes with Replication Never Started', section:'HC_Nodes',
+  { id:'hc_17_no_repl_start', title:'Nodes with Replication Never Started', section:'HC_Nodes', v8only:true,
+    // LAST_REPL_START is a version-specific FILESPACES column; not present on all v8.1.x levels.
     sql:"SELECT DISTINCT NODE_NAME FROM FILESPACES WHERE LAST_REPL_START IS NULL AND BACKUP_END IS NOT NULL ORDER BY NODE_NAME",
     outputFile:'hc_17_no_repl_start.csv' },
 
   // ── Activity ──────────────────────────────────────────────────────────────
   { id:'hc_18_actlog_errors', title:'Activity Log Errors/Warnings (48 hrs)', section:'HC_Activity',
-    sql:"SELECT DATE_TIME,SEVERITY,MSGNO,MESSAGE,NODE_NAME,ORIGINATOR FROM ACTLOG WHERE SEVERITY IN ('W','E','S') AND DATE_TIME>=CURRENT_TIMESTAMP-48 HOURS ORDER BY DATE_TIME DESC",
+    sql:"SELECT DATE_TIME,SEVERITY,MSGNO,MESSAGE,NODE_NAME,ORIGINATOR FROM ACTLOG WHERE SEVERITY IN ('W','E','S') AND DATE_TIME>=CURRENT_TIMESTAMP - 48 HOURS ORDER BY DATE_TIME DESC",
     outputFile:'hc_18_actlog_errors.csv' },
 
   { id:'hc_19_actlog_severe', title:'Severe Activity Log Messages (7 days)', section:'HC_Activity',
-    sql:"SELECT DATE_TIME,SEVERITY,MSGNO,MESSAGE,NODE_NAME FROM ACTLOG WHERE SEVERITY='S' AND DATE_TIME>=CURRENT_TIMESTAMP-7 DAYS ORDER BY DATE_TIME DESC",
+    sql:"SELECT DATE_TIME,SEVERITY,MSGNO,MESSAGE,NODE_NAME FROM ACTLOG WHERE SEVERITY='S' AND DATE_TIME>=CURRENT_TIMESTAMP - 7 DAYS ORDER BY DATE_TIME DESC",
     outputFile:'hc_19_actlog_severe.csv' },
 
   { id:'hc_20_summary_overview', title:'Summary Activity Overview (30 days)', section:'HC_Activity',
-    sql:"SELECT ACTIVITY,SUCCESSFUL,COUNT(*) AS RUN_COUNT FROM SUMMARY WHERE START_TIME>=CURRENT_TIMESTAMP-30 DAYS GROUP BY ACTIVITY,SUCCESSFUL ORDER BY ACTIVITY,SUCCESSFUL",
+    sql:"SELECT ACTIVITY,SUCCESSFUL,COUNT(*) AS RUN_COUNT FROM SUMMARY WHERE START_TIME>=CURRENT_TIMESTAMP - 30 DAYS GROUP BY ACTIVITY,SUCCESSFUL ORDER BY ACTIVITY,SUCCESSFUL",
     outputFile:'hc_20_summary_overview.csv' },
 
   { id:'hc_21_hk_failures', title:'Housekeeping Failures (30 days)', section:'HC_Activity',
-    sql:"SELECT ACTIVITY,ENTITY,COUNT(*) AS FAILURE_COUNT FROM SUMMARY WHERE START_TIME>=CURRENT_TIMESTAMP-30 DAYS AND ACTIVITY NOT IN ('BACKUP','RESTORE','ARCHIVE','RETRIEVE','HSM-MIGRATE','RECALL') AND SUCCESSFUL='NO' GROUP BY ACTIVITY,ENTITY ORDER BY FAILURE_COUNT DESC,ACTIVITY",
+    sql:"SELECT ACTIVITY,ENTITY,COUNT(*) AS FAILURE_COUNT FROM SUMMARY WHERE START_TIME>=CURRENT_TIMESTAMP - 30 DAYS AND ACTIVITY NOT IN ('BACKUP','RESTORE','ARCHIVE','RETRIEVE','HSM-MIGRATE','RECALL') AND SUCCESSFUL='NO' GROUP BY ACTIVITY,ENTITY ORDER BY FAILURE_COUNT DESC,ACTIVITY",
     outputFile:'hc_21_hk_failures.csv' },
 
   { id:'hc_22_migration_7d', title:'Migration Activity (7 days)', section:'HC_Activity',
-    sql:"SELECT SUBSTR(CHAR(START_TIME),1,19) AS START_TIME,SUBSTR(CHAR(END_TIME),1,19) AS END_TIME,ENTITY AS STGPOOL,SUCCESSFUL,CAST(BYTES/1024/1024/1024 AS DECIMAL(10,2)) AS GB_MIGRATED FROM SUMMARY WHERE ACTIVITY='MIGRATION' AND SCHEDULE_NAME IS NULL AND START_TIME>=CURRENT_TIMESTAMP-7 DAYS ORDER BY START_TIME DESC",
+    sql:"SELECT SUBSTR(CHAR(START_TIME),1,19) AS START_TIME,SUBSTR(CHAR(END_TIME),1,19) AS END_TIME,ENTITY AS STGPOOL,SUCCESSFUL,CAST(BYTES/1024/1024/1024 AS DECIMAL(10,2)) AS GB_MIGRATED FROM SUMMARY WHERE ACTIVITY='MIGRATION' AND SCHEDULE_NAME IS NULL AND START_TIME>=CURRENT_TIMESTAMP - 7 DAYS ORDER BY START_TIME DESC",
     outputFile:'hc_22_migration_7d.csv' },
 
   { id:'hc_23_reclamation_7d', title:'Reclamation Activity (7 days)', section:'HC_Activity',
-    sql:"SELECT SUBSTR(CHAR(START_TIME),1,19) AS START_TIME,SUBSTR(CHAR(END_TIME),1,19) AS END_TIME,ENTITY AS STGPOOL,SUCCESSFUL,CAST(BYTES/1024/1024/1024 AS DECIMAL(10,2)) AS GB_RECLAIMED FROM SUMMARY WHERE ACTIVITY='RECLAMATION' AND START_TIME>=CURRENT_TIMESTAMP-7 DAYS ORDER BY START_TIME DESC",
+    sql:"SELECT SUBSTR(CHAR(START_TIME),1,19) AS START_TIME,SUBSTR(CHAR(END_TIME),1,19) AS END_TIME,ENTITY AS STGPOOL,SUCCESSFUL,CAST(BYTES/1024/1024/1024 AS DECIMAL(10,2)) AS GB_RECLAIMED FROM SUMMARY WHERE ACTIVITY='RECLAMATION' AND START_TIME>=CURRENT_TIMESTAMP - 7 DAYS ORDER BY START_TIME DESC",
     outputFile:'hc_23_reclamation_7d.csv' },
 
   { id:'hc_24_backup_summary', title:'Backup Summary by Node (7 days)', section:'HC_Activity',
-    sql:"SELECT ENTITY AS NODE_NAME,COUNT(*) AS SESSION_COUNT,CAST(SUM(BYTES)/1024/1024/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(MIN(BYTES)/1024/1024/1024 AS DECIMAL(12,2)) AS MIN_GB,CAST(MAX(BYTES)/1024/1024/1024 AS DECIMAL(12,2)) AS MAX_GB FROM SUMMARY WHERE ACTIVITY='BACKUP' AND START_TIME>=CURRENT_TIMESTAMP-7 DAYS GROUP BY ENTITY ORDER BY TOTAL_GB DESC",
+    sql:"SELECT ENTITY AS NODE_NAME,COUNT(*) AS SESSION_COUNT,CAST(SUM(BYTES)/1024/1024/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(MIN(BYTES)/1024/1024/1024 AS DECIMAL(12,2)) AS MIN_GB,CAST(MAX(BYTES)/1024/1024/1024 AS DECIMAL(12,2)) AS MAX_GB FROM SUMMARY WHERE ACTIVITY='BACKUP' AND START_TIME>=CURRENT_TIMESTAMP - 7 DAYS GROUP BY ENTITY ORDER BY TOTAL_GB DESC",
     outputFile:'hc_24_backup_summary.csv' },
 
   // ── Advanced v8 ───────────────────────────────────────────────────────────
@@ -670,7 +695,7 @@ const HEALTH_QUERIES = [
     outputFile:'hc_26_containers_bad.csv' },
 
   { id:'hc_27_repl_stats', title:'Storage Pool Protection Stats (30 days)', section:'HC_Advanced',
-    sql:"SELECT DATE(END_TIME) AS END_DATE,ENTITY AS STGPOOL,SUCCESSFUL,COUNT(*) AS RUN_COUNT,CAST(SUM(BYTES)/1024/1024/1024 AS DECIMAL(12,2)) AS TOTAL_GB FROM SUMMARY WHERE ACTIVITY='STGPOOL PROTECTION' AND END_TIME>=CURRENT_TIMESTAMP-30 DAYS GROUP BY DATE(END_TIME),ENTITY,SUCCESSFUL ORDER BY END_DATE DESC",
+    sql:"SELECT DATE(END_TIME) AS END_DATE,ENTITY AS STGPOOL,SUCCESSFUL,COUNT(*) AS RUN_COUNT,CAST(SUM(BYTES)/1024/1024/1024 AS DECIMAL(12,2)) AS TOTAL_GB FROM SUMMARY WHERE ACTIVITY='STGPOOL PROTECTION' AND END_TIME>=CURRENT_TIMESTAMP - 30 DAYS GROUP BY DATE(END_TIME),ENTITY,SUCCESSFUL ORDER BY END_DATE DESC",
     outputFile:'hc_27_repl_stats.csv' },
 
   { id:'hc_28_processes', title:'Active Processes (Snapshot)', section:'HC_Advanced',
@@ -683,7 +708,7 @@ const HEALTH_QUERIES = [
     outputFile:'hc_29_db_backup_age.csv' },
 
   { id:'hc_30_copy_failures', title:'Storage Pool Copy/Protection Failures (30 days)', section:'HC_Activity',
-    sql:"SELECT SUBSTR(CHAR(START_TIME),1,19) AS START_TIME,ACTIVITY,ENTITY AS STGPOOL,CAST(BYTES/1024/1024/1024 AS DECIMAL(12,2)) AS GB FROM SUMMARY WHERE ACTIVITY IN ('STGPOOL PROTECTION','COPY STGPOOL') AND UPPER(SUCCESSFUL)='NO' AND START_TIME>=CURRENT_TIMESTAMP-30 DAYS ORDER BY START_TIME DESC",
+    sql:"SELECT SUBSTR(CHAR(START_TIME),1,19) AS START_TIME,ACTIVITY,ENTITY AS STGPOOL,CAST(BYTES/1024/1024/1024 AS DECIMAL(12,2)) AS GB FROM SUMMARY WHERE ACTIVITY IN ('STGPOOL PROTECTION','COPY STGPOOL') AND UPPER(SUCCESSFUL)='NO' AND START_TIME>=CURRENT_TIMESTAMP - 30 DAYS ORDER BY START_TIME DESC",
     outputFile:'hc_30_copy_failures.csv' },
 
   { id:'hc_31_active_sessions', title:'Active Client Sessions (Snapshot)', section:'HC_Advanced',
@@ -784,6 +809,10 @@ function generateCmdContent(type) {
   lines.push('');
   lines.push('IF NOT EXIST "%OUTDIR%" MKDIR "%OUTDIR%"');
   lines.push('');
+  lines.push('SET PASS_COUNT=0');
+  lines.push('SET WARN_COUNT=0');
+  lines.push('SET FAIL_COUNT=0');
+  lines.push('');
   lines.push('echo =================================================================');
   lines.push(`echo IBM Storage Protect — ${label} Collection`);
   lines.push(`echo Customer : ${cfg.customerName || '(not set)'}`);
@@ -815,11 +844,12 @@ function generateCmdContent(type) {
   lines.push('GOTO :QUERIES_START');
   lines.push('');
   lines.push(':PREFLIGHT_FAIL');
-  lines.push('echo [FATAL] Preflight authentication/connection check failed (rc=%PREFLIGHT_RC%) 1>&2');
+  lines.push('CALL :RCInfo %PREFLIGHT_RC%');
+  lines.push('echo [FATAL] Preflight authentication/connection check failed (rc=%PREFLIGHT_RC% %RC_SYM% - %RC_DESC%) 1>&2');
   lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" TYPE "%OUTDIR%\\preflight.tmp" 1>&2');
-  lines.push('echo --- PREFLIGHT FAILED (rc=%PREFLIGHT_RC%) --- >> "%OUTDIR%\\collection_errors.log"');
+  lines.push('echo --- PREFLIGHT FAILED (rc=%PREFLIGHT_RC% %RC_SYM% - %RC_DESC%) --- >> "%OUTDIR%\\collection_errors.log"');
   lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" TYPE "%OUTDIR%\\preflight.tmp" >> "%OUTDIR%\\collection_errors.log"');
-  lines.push('echo %DATE% %TIME% [FATAL] Preflight failed rc=%PREFLIGHT_RC% -- collection aborted >> "%OUTDIR%\\collection_log.txt"');
+  lines.push('echo %DATE% %TIME% [FATAL] Preflight failed rc=%PREFLIGHT_RC% %RC_SYM% - %RC_DESC% -- collection aborted >> "%OUTDIR%\\collection_log.txt"');
   lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" DEL "%OUTDIR%\\preflight.tmp"');
   lines.push('EXIT /B 1');
   lines.push('');
@@ -837,12 +867,17 @@ function generateCmdContent(type) {
     lines.push(buildCmdLine(cfg, q));
     lines.push('SET QRC=%ERRORLEVEL%');
     lines.push('SET QSTATUS=[OK]');
+    lines.push('CALL :RCInfo %QRC%');
     lines.push('IF NOT %QRC%==0 SET QSTATUS=[FAILED]');
+    lines.push('IF NOT %QRC%==0 IF /I "%RC_SEV%"=="WARN" SET QSTATUS=[WARN]');
     lines.push('IF %QRC%==0 (');
     lines.push('  FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO IF %%~zS GTR 0 SET QSTATUS=[WARN]');
     lines.push(')');
-    lines.push(`echo   %QSTATUS% [${num}/${total}] ${q.title} (rc=%QRC%)`);
-    lines.push(`echo %DATE% %TIME% %QSTATUS% [${num}/${total}] ${q.title} rc=%QRC% >> "%OUTDIR%\\collection_log.txt"`);
+    lines.push(`echo   %QSTATUS% [${num}/${total}] ${q.title} (rc=%QRC% %RC_SYM% - %RC_DESC%)`);
+    lines.push(`echo %DATE% %TIME% %QSTATUS% [${num}/${total}] ${q.title} rc=%QRC% %RC_SYM% - %RC_DESC% >> "%OUTDIR%\\collection_log.txt"`);
+    lines.push('IF "%QSTATUS%"=="[FAILED]" SET /A FAIL_COUNT+=1');
+    lines.push('IF "%QSTATUS%"=="[WARN]"   SET /A WARN_COUNT+=1');
+    lines.push('IF "%QSTATUS%"=="[OK]"     SET /A PASS_COUNT+=1');
     lines.push('FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO IF %%~zS GTR 0 (');
     lines.push(`  echo --- Stderr for [${num}/${total}] ${q.title} ---`);
     lines.push('  TYPE "%OUTDIR%\\qerr.tmp"');
@@ -868,15 +903,57 @@ function generateCmdContent(type) {
   lines.push(`echo ${label} collection complete: %DATE% %TIME%`);
   lines.push('echo Results saved to: %OUTDIR%');
   lines.push('echo.');
+  lines.push('echo Passed: %PASS_COUNT%  Warned: %WARN_COUNT%  Failed: %FAIL_COUNT%');
   lines.push('echo Per-query status: "%OUTDIR%\\collection_log.txt"');
   lines.push('echo Errors (if any) : "%OUTDIR%\\collection_errors.log"');
   lines.push('echo.');
   lines.push('echo *** REMINDER: Delete this CMD file after generating your report! ***');
   lines.push('echo =================================================================');
   lines.push('');
-  lines.push(`echo %DATE% %TIME% — collection complete >> "%OUTDIR%\\collection_log.txt"`);
+  lines.push(`echo %DATE% %TIME% -- collection complete (passed=%PASS_COUNT% warned=%WARN_COUNT% failed=%FAIL_COUNT%) >> "%OUTDIR%\\collection_log.txt"`);
   lines.push('');
   lines.push('endlocal');
+  lines.push('GOTO :EOF');
+  lines.push('');
+  lines.push('REM ================================================================');
+  lines.push('REM :RCInfo  —  translate IBM SP return code to RC_SYM, RC_DESC, RC_SEV');
+  lines.push('REM   %1    IBM SP / dsmadmc return code');
+  lines.push('REM   Sets RC_SYM  (symbolic constant name)');
+  lines.push('REM        RC_DESC (short description)');
+  lines.push('REM        RC_SEV  (OK, WARN, or FAIL)');
+  lines.push('REM   rc=11 (RC_NOTFOUND) and rc=35 (RC_CANCELED) are IBM-documented warnings.');
+  lines.push('REM ================================================================');
+  lines.push(':RCInfo');
+  lines.push('SET "RC_SYM=RC_UNKNOWN_VALUE"');
+  lines.push('SET "RC_DESC=undocumented return code - inspect stderr/error log"');
+  lines.push('SET "RC_SEV=FAIL"');
+  lines.push('IF "%~1"=="0"   (SET "RC_SYM=RC_OK"              & SET "RC_DESC=command completed successfully"                    & SET "RC_SEV=OK"   & GOTO :EOF)');
+  lines.push('IF "%~1"=="2"   (SET "RC_SYM=RC_UNKNOWN"         & SET "RC_DESC=unknown command"                                  & GOTO :EOF)');
+  lines.push('IF "%~1"=="3"   (SET "RC_SYM=RC_SYNTAX"          & SET "RC_DESC=invalid command/SQL syntax or parameters"         & GOTO :EOF)');
+  lines.push('IF "%~1"=="4"   (SET "RC_SYM=RC_ERROR"           & SET "RC_DESC=internal server error"                            & GOTO :EOF)');
+  lines.push('IF "%~1"=="5"   (SET "RC_SYM=RC_NOMEMORY"        & SET "RC_DESC=insufficient server memory"                       & GOTO :EOF)');
+  lines.push('IF "%~1"=="6"   (SET "RC_SYM=RC_NOLOG"           & SET "RC_DESC=insufficient recovery log space"                  & GOTO :EOF)');
+  lines.push('IF "%~1"=="7"   (SET "RC_SYM=RC_NODB"            & SET "RC_DESC=insufficient database space"                      & GOTO :EOF)');
+  lines.push('IF "%~1"=="8"   (SET "RC_SYM=RC_NOSTORAGE"       & SET "RC_DESC=insufficient storage space"                       & GOTO :EOF)');
+  lines.push('IF "%~1"=="9"   (SET "RC_SYM=RC_NOAUTH"          & SET "RC_DESC=administrator is not authorized"                  & GOTO :EOF)');
+  lines.push('IF "%~1"=="10"  (SET "RC_SYM=RC_EXISTS"          & SET "RC_DESC=object already exists"                            & GOTO :EOF)');
+  lines.push('IF "%~1"=="11"  (SET "RC_SYM=RC_NOTFOUND"        & SET "RC_DESC=no matching rows/objects"                         & SET "RC_SEV=WARN" & GOTO :EOF)');
+  lines.push('IF "%~1"=="12"  (SET "RC_SYM=RC_INUSE"           & SET "RC_DESC=object is in use"                                 & GOTO :EOF)');
+  lines.push('IF "%~1"=="13"  (SET "RC_SYM=RC_ISREFERENCED"    & SET "RC_DESC=object is still referenced"                       & GOTO :EOF)');
+  lines.push('IF "%~1"=="14"  (SET "RC_SYM=RC_NOTAVAILABLE"    & SET "RC_DESC=object is unavailable"                            & GOTO :EOF)');
+  lines.push('IF "%~1"=="15"  (SET "RC_SYM=RC_IOERROR"         & SET "RC_DESC=server I/O error"                                 & GOTO :EOF)');
+  lines.push('IF "%~1"=="27"  (SET "RC_SYM=RC_INVALIDUSE"      & SET "RC_DESC=command used incorrectly"                         & GOTO :EOF)');
+  lines.push('IF "%~1"=="28"  (SET "RC_SYM=RC_NOTABLE"         & SET "RC_DESC=unknown SQL table or view"                        & GOTO :EOF)');
+  lines.push('IF "%~1"=="29"  (SET "RC_SYM=RC_FS_NOTCAP"       & SET "RC_DESC=incompatible filespace name types"                & GOTO :EOF)');
+  lines.push('IF "%~1"=="30"  (SET "RC_SYM=RC_INVALIDADDR"     & SET "RC_DESC=invalid high/low address"                         & GOTO :EOF)');
+  lines.push('IF "%~1"=="31"  (SET "RC_SYM=RC_INVALIDCG"       & SET "RC_DESC=management class lacks archive copy group"        & GOTO :EOF)');
+  lines.push('IF "%~1"=="32"  (SET "RC_SYM=RC_OVERSIZE_VOL"    & SET "RC_DESC=volume exceeds maximum size"                      & GOTO :EOF)');
+  lines.push('IF "%~1"=="33"  (SET "RC_SYM=RC_DEFVOL_FAIL"     & SET "RC_DESC=volume cannot be defined for this pool type"      & GOTO :EOF)');
+  lines.push('IF "%~1"=="34"  (SET "RC_SYM=RC_DELVOL_FAIL"     & SET "RC_DESC=volume cannot be deleted for this pool type"      & GOTO :EOF)');
+  lines.push('IF "%~1"=="35"  (SET "RC_SYM=RC_CANCELED"        & SET "RC_DESC=command canceled"                                 & SET "RC_SEV=WARN" & GOTO :EOF)');
+  lines.push('IF "%~1"=="36"  (SET "RC_SYM=RC_INVPOLICY"       & SET "RC_DESC=invalid policy-domain definition"                 & GOTO :EOF)');
+  lines.push('IF "%~1"=="137" (SET "RC_SYM=DSM_RC_AUTH_FAILURE" & SET "RC_DESC=authentication failed"                           & GOTO :EOF)');
+  lines.push('GOTO :EOF');
 
   return lines.join('\r\n');
 }
@@ -981,39 +1058,79 @@ function generateShContent(type) {
   lines.push('  fi');
   lines.push('}');
   lines.push('');
+  lines.push('# rc_info RC');
+  lines.push('#   Translates a dsmadmc/IBM SP return code to symbolic name, description,');
+  lines.push('#   and severity.  Sets RC_SYM, RC_DESC, RC_SEV (OK, WARN, or FAIL).');
+  lines.push('#   IBM-documented server-script return codes; rc=11 and rc=35 are warnings.');
+  lines.push('rc_info() {');
+  lines.push('  case "$1" in');
+  lines.push('    0)   RC_SYM="RC_OK";              RC_DESC="command completed successfully";                    RC_SEV="OK"   ;;');
+  lines.push('    2)   RC_SYM="RC_UNKNOWN";          RC_DESC="unknown command";                                  RC_SEV="FAIL" ;;');
+  lines.push('    3)   RC_SYM="RC_SYNTAX";           RC_DESC="invalid command/SQL syntax or parameters";         RC_SEV="FAIL" ;;');
+  lines.push('    4)   RC_SYM="RC_ERROR";            RC_DESC="internal server error";                            RC_SEV="FAIL" ;;');
+  lines.push('    5)   RC_SYM="RC_NOMEMORY";         RC_DESC="insufficient server memory";                       RC_SEV="FAIL" ;;');
+  lines.push('    6)   RC_SYM="RC_NOLOG";            RC_DESC="insufficient recovery log space";                  RC_SEV="FAIL" ;;');
+  lines.push('    7)   RC_SYM="RC_NODB";             RC_DESC="insufficient database space";                      RC_SEV="FAIL" ;;');
+  lines.push('    8)   RC_SYM="RC_NOSTORAGE";        RC_DESC="insufficient storage space";                       RC_SEV="FAIL" ;;');
+  lines.push('    9)   RC_SYM="RC_NOAUTH";           RC_DESC="administrator is not authorized";                  RC_SEV="FAIL" ;;');
+  lines.push('    10)  RC_SYM="RC_EXISTS";           RC_DESC="object already exists";                            RC_SEV="FAIL" ;;');
+  lines.push('    11)  RC_SYM="RC_NOTFOUND";         RC_DESC="no matching rows/objects";                         RC_SEV="WARN" ;;');
+  lines.push('    12)  RC_SYM="RC_INUSE";            RC_DESC="object is in use";                                 RC_SEV="FAIL" ;;');
+  lines.push('    13)  RC_SYM="RC_ISREFERENCED";     RC_DESC="object is still referenced";                       RC_SEV="FAIL" ;;');
+  lines.push('    14)  RC_SYM="RC_NOTAVAILABLE";     RC_DESC="object is unavailable";                            RC_SEV="FAIL" ;;');
+  lines.push('    15)  RC_SYM="RC_IOERROR";          RC_DESC="server I/O error";                                 RC_SEV="FAIL" ;;');
+  lines.push('    27)  RC_SYM="RC_INVALIDUSE";       RC_DESC="command used incorrectly";                         RC_SEV="FAIL" ;;');
+  lines.push('    28)  RC_SYM="RC_NOTABLE";          RC_DESC="unknown SQL table or view";                        RC_SEV="FAIL" ;;');
+  lines.push('    29)  RC_SYM="RC_FS_NOTCAP";        RC_DESC="incompatible filespace name types";                RC_SEV="FAIL" ;;');
+  lines.push('    30)  RC_SYM="RC_INVALIDADDR";      RC_DESC="invalid high/low address";                         RC_SEV="FAIL" ;;');
+  lines.push('    31)  RC_SYM="RC_INVALIDCG";        RC_DESC="management class lacks archive copy group";        RC_SEV="FAIL" ;;');
+  lines.push('    32)  RC_SYM="RC_OVERSIZE_VOL";     RC_DESC="volume exceeds maximum size";                      RC_SEV="FAIL" ;;');
+  lines.push('    33)  RC_SYM="RC_DEFVOL_FAIL";      RC_DESC="volume cannot be defined for this pool type";      RC_SEV="FAIL" ;;');
+  lines.push('    34)  RC_SYM="RC_DELVOL_FAIL";      RC_DESC="volume cannot be deleted for this pool type";      RC_SEV="FAIL" ;;');
+  lines.push('    35)  RC_SYM="RC_CANCELED";         RC_DESC="command canceled";                                 RC_SEV="WARN" ;;');
+  lines.push('    36)  RC_SYM="RC_INVPOLICY";        RC_DESC="invalid policy-domain definition";                 RC_SEV="FAIL" ;;');
+  lines.push('    137) RC_SYM="DSM_RC_AUTH_FAILURE"; RC_DESC="authentication failed";                            RC_SEV="FAIL" ;;');
+  lines.push('    *)   RC_SYM="RC_UNKNOWN_VALUE";    RC_DESC="undocumented return code -- inspect stderr/error log"; RC_SEV="FAIL" ;;');
+  lines.push('  esac');
+  lines.push('}');
+  lines.push('');
   lines.push('# run_query QNUM QTITLE QSQL QOUT');
-  lines.push('#   Runs one dsmadmc query: stdout→CSV, stderr→temp file then console+errlog.');
-  lines.push('#   Sets QSTATUS to [OK], [WARN] (rc=0 but stderr), or [FAILED] (rc!=0).');
-  lines.push('#   Increments PASS_COUNT/WARN_COUNT/FAIL_COUNT accordingly.');
+  lines.push('#   Runs one dsmadmc query: stdout->CSV, stderr->temp file then console+errlog.');
+  lines.push('#   Calls rc_info to translate the return code; rc=11 (RC_NOTFOUND) and');
+  lines.push('#   rc=35 (RC_CANCELED) are IBM-documented warnings, not errors.');
+  lines.push('#   Sets QSTATUS to [OK], [WARN], or [FAILED] and increments counts.');
   lines.push('run_query() {');
   lines.push('  QNUM="$1"; QTITLE="$2"; QSQL="$3"; QOUT="$4"');
   lines.push('  QTMP="$(mktemp 2>/dev/null)" || QTMP="${OUTDIR}/q$$.tmp"');
   lines.push('  echo "[$QNUM] $QTITLE..."');
   lines.push('  run_dsmadmc "$QSQL" > "$QOUT" 2>"$QTMP"');
   lines.push('  QRC=$?');
+  lines.push('  rc_info "$QRC"');
   lines.push('  if [ "$QRC" -eq 0 ]; then');
   lines.push('    if [ -s "$QTMP" ]; then');
   lines.push('      QSTATUS="[WARN]"');
   lines.push('    else');
   lines.push('      QSTATUS="[OK]"');
   lines.push('    fi');
+  lines.push('  elif [ "$RC_SEV" = "WARN" ]; then');
+  lines.push('    QSTATUS="[WARN]"');
   lines.push('  else');
   lines.push('    QSTATUS="[FAILED]"');
   lines.push('  fi');
-  lines.push('  echo "  $QSTATUS $QTITLE (rc=$QRC)"');
-  lines.push('  printf \'%s %s [%s] %s rc=%s\\n\' "$(date)" "$QSTATUS" "$QNUM" "$QTITLE" "$QRC" >> "$LOGFILE"');
+  lines.push('  echo "  $QSTATUS $QTITLE (rc=$QRC $RC_SYM -- $RC_DESC)"');
+  lines.push('  printf \'%s\\n\' "$(date) $QSTATUS [$QNUM] $QTITLE (rc=$QRC $RC_SYM -- $RC_DESC)" >> "$LOGFILE"');
   lines.push('  if [ -s "$QTMP" ]; then');
   lines.push('    printf \'%s\\n\' "--- $(date) [$QNUM] $QTITLE ---" >> "$ERRLOG"');
   lines.push('    tee -a "$ERRLOG" < "$QTMP" >&2');
   lines.push('    printf \'\\n\' >> "$ERRLOG"');
   lines.push('    if grep -qi \'ANS1051I\' "$QTMP"; then');
-  lines.push('      printf \'%s\\n\' "$(date) [FATAL] ANS1051I authentication failure in [$QNUM] $QTITLE — aborting collection" >> "$LOGFILE"');
+  lines.push('      printf \'%s\\n\' "$(date) [FATAL] ANS1051I authentication failure in [$QNUM] $QTITLE -- aborting collection" >> "$LOGFILE"');
   lines.push('      rm -f "$QTMP"; QTMP=""');
   lines.push('      exit 1');
   lines.push('    fi');
   lines.push('  fi');
   lines.push('  rm -f "$QTMP"; QTMP=""');
-  lines.push('  if [ "$QRC" -ne 0 ]; then');
+  lines.push('  if [ "$QSTATUS" = "[FAILED]" ]; then');
   lines.push('    FAIL_COUNT=$((FAIL_COUNT + 1))');
   lines.push('  elif [ "$QSTATUS" = "[WARN]" ]; then');
   lines.push('    WARN_COUNT=$((WARN_COUNT + 1))');
@@ -1029,16 +1146,17 @@ function generateShContent(type) {
   lines.push('run_dsmadmc \'QUERY SESSION\' > /dev/null 2>"$PREFLIGHT_TMP"');
   lines.push('PREFLIGHT_RC=$?');
   lines.push('if [ "$PREFLIGHT_RC" -ne 0 ] || grep -qi \'ANS1051I\' "$PREFLIGHT_TMP" 2>/dev/null; then');
-  lines.push('  printf \'%s\\n\' "[FATAL] Preflight authentication/connection check failed (rc=$PREFLIGHT_RC)" >&2');
+  lines.push('  rc_info "$PREFLIGHT_RC"');
+  lines.push('  printf \'%s\\n\' "[FATAL] Preflight authentication/connection check failed (rc=$PREFLIGHT_RC $RC_SYM -- $RC_DESC)" >&2');
   lines.push('  cat "$PREFLIGHT_TMP" >&2');
-  lines.push('  printf \'%s\\n\' "--- PREFLIGHT FAILED (rc=$PREFLIGHT_RC) ---" >> "$ERRLOG"');
+  lines.push('  printf \'%s\\n\' "--- PREFLIGHT FAILED (rc=$PREFLIGHT_RC $RC_SYM -- $RC_DESC) ---" >> "$ERRLOG"');
   lines.push('  cat "$PREFLIGHT_TMP" >> "$ERRLOG"');
-  lines.push('  printf \'%s\\n\' "$(date) [FATAL] Preflight failed rc=$PREFLIGHT_RC — collection aborted" >> "$LOGFILE"');
+  lines.push('  printf \'%s\\n\' "$(date) [FATAL] Preflight failed rc=$PREFLIGHT_RC $RC_SYM -- $RC_DESC -- collection aborted" >> "$LOGFILE"');
   lines.push('  rm -f "$PREFLIGHT_TMP"; PREFLIGHT_TMP=""');
   lines.push('  exit 1');
   lines.push('fi');
   lines.push('rm -f "$PREFLIGHT_TMP"; PREFLIGHT_TMP=""');
-  lines.push('echo "Preflight OK — connection verified."');
+  lines.push('echo "Preflight OK -- connection verified."');
   lines.push('echo');
   lines.push('');
 
