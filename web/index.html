@@ -728,6 +728,10 @@ function buildCmdLine(cfg, query) {
   return `"%DSMADMC%" -id=%ADMID% -pa=%ADMPA% %OPTARG% -commadelimited "${sql}" > "${outFile}" 2>"%OUTDIR%\\qerr.tmp"`;
 }
 
+function getOptionalWarnFlag(query) {
+  return query.warnIfMissing ? '1' : '0';
+}
+
 function generateCmdContent() {
   const cfg     = readConfig();
   const queries = ALL_QUERIES;
@@ -825,7 +829,7 @@ function generateCmdContent() {
     lines.push(`echo [${num}/${total}] ${q.title}${v8note}...`);
     lines.push(buildCmdLine(cfg, q));
     lines.push('SET QRC=%ERRORLEVEL%');
-    lines.push(`SET OPTIONAL_NOTABLE_WARN=${q.warnIfMissing ? '1' : '0'}`);
+    lines.push(`SET OPTIONAL_NOTABLE_WARN=${getOptionalWarnFlag(q)}`);
     lines.push('SET QSTATUS=[OK]');
     lines.push('CALL :RCInfo %QRC%');
     lines.push('IF NOT %QRC%==0 SET QSTATUS=[FAILED]');
@@ -937,7 +941,7 @@ function buildShLine(query, numStr, total) {
   const sql   = shellQuote(query.sql);
   const title = shellQuote(query.title);
   const num   = shellQuote(`${numStr}/${total}`);
-  const warn  = shellQuote(query.warnIfMissing ? '1' : '0');
+  const warn  = shellQuote(getOptionalWarnFlag(query));
   return `run_query ${num} ${title} ${warn} ${sql} "$OUTDIR/${query.outputFile}"`;
 }
 
@@ -1042,6 +1046,8 @@ function generateShContent() {
   lines.push('  esac');
   lines.push('}');
   lines.push('');
+  lines.push('# run_query QNUM QTITLE QWARNMISSING QSQL QOUT');
+  lines.push('#   QWARNMISSING=1 downgrades RC_NOTABLE to WARN for optional views.');
   lines.push('run_query() {');
   lines.push('  QNUM="$1"; QTITLE="$2"; QWARNMISSING="$3"; QSQL="$4"; QOUT="$5"');
   lines.push('  QTMP="$(mktemp 2>/dev/null)" || QTMP="${OUTDIR}/q$$.tmp"');

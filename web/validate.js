@@ -249,8 +249,7 @@ const readmeChecks = [
   'does not select the target server',
   'RETSETS',
   'RETRULES',
-  'STGRULES',
-  '76 queries'
+  'STGRULES'
 ];
 for (const token of readmeChecks) {
   if (readme.includes(token)) ok(`README includes ${token}`);
@@ -258,6 +257,8 @@ for (const token of readmeChecks) {
 }
 if (!/Documentation CMD|Healthcheck CMD|Documentation SH|Healthcheck SH|documentation collection|healthcheck collection/i.test(readme)) ok('README no longer describes split documentation/healthcheck scripts');
 else fail('README still contains stale split-workflow language');
+if (readme.includes(`${ALL_QUERIES.length} queries`)) ok(`README reflects current query count (${ALL_QUERIES.length})`);
+else fail(`README missing current query count (${ALL_QUERIES.length} queries)`);
 
 section('11. POSIX shell syntax');
 const tmpSh = path.join(os.tmpdir(), 'storagetools-complete-test.sh');
