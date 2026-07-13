@@ -313,7 +313,6 @@ if (!q41) {
   }
 }
 
-
 section('6. Division-by-zero guards (NULLIF) on percentage calculations');
 // Queries that divide by a potentially-zero column should use NULLIF.
 const divisionQueries = allQueries.filter(q =>
