@@ -370,14 +370,12 @@ const DOC_QUERIES = [
     outputFile:'doc_01_status.csv' },
 
   { id:'doc_02_db', title:'Database Information', section:'Server',
-    // TOT_FILE_SYSTEM_MB/USED_DB_SPACE_MB are wrong names; IBM SP DB view uses TOTAL_SPACE_MB/USED_SPACE_MB.
-    // LAST_REORG is not a column in the DB view.
+    // TOT_FILE_SYSTEM_MB/USED_DB_SPACE_MB are wrong IBM SP column names; the DB view uses TOTAL_SPACE_MB/USED_SPACE_MB. LAST_REORG does not exist in this view.
     sql:"SELECT DATABASE_NAME,CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,BUFF_HIT_RATIO,PKG_HIT_RATIO,LAST_BACKUP_DATE,PHYSICAL_VOLUMES,NUM_DB_DIRS FROM DB",
     outputFile:'doc_02_db.csv' },
 
   { id:'doc_03_dbspace', title:'Database Volumes (DBSPACE)', section:'Server',
-    // TOTAL_FS_SIZE_MB/USED_FS_SIZE_MB are wrong; IBM SP DBSPACE view uses TOTAL_SPACE_MB/USED_SPACE_MB.
-    // LOCATION is not a documented DBSPACE column (volume name IS the path).
+    // TOTAL_FS_SIZE_MB/USED_FS_SIZE_MB are wrong IBM SP column names; the DBSPACE view uses TOTAL_SPACE_MB/USED_SPACE_MB. LOCATION is not a documented DBSPACE column.
     sql:"SELECT VOLUME_NAME,CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB FROM DBSPACE ORDER BY VOLUME_NAME",
     outputFile:'doc_03_dbspace.csv' },
 
@@ -417,7 +415,7 @@ const DOC_QUERIES = [
   { id:'doc_10_filespaces', title:'Node Filespaces', section:'Filespaces',
     // LAST_REPL_START, LAST_REPL_COMP and DECOMM_STATE are version-specific v8 columns that
     // are not universally present across all 8.1.x fix packs.
-    sql:"SELECT NODE_NAME,FILESPACE_NAME,FILESPACE_TYPE,CAST(CAPACITY/1024 AS DECIMAL(12,2)) AS CAPACITY_GB,CAST(PCT_UTIL AS DECIMAL(5,2)) AS PCT_UTIL,CAST(CAPACITY/1024/100*NULLIF(PCT_UTIL,0) AS DECIMAL(12,2)) AS USED_GB,BACKUP_START,BACKUP_END FROM FILESPACES WHERE FILESPACE_TYPE NOT IN ('VSS') AND FILESPACE_TYPE NOT LIKE 'API:%%' ORDER BY NODE_NAME,FILESPACE_NAME",
+    sql:"SELECT NODE_NAME,FILESPACE_NAME,FILESPACE_TYPE,CAST(CAPACITY/1024 AS DECIMAL(12,2)) AS CAPACITY_GB,CAST(PCT_UTIL AS DECIMAL(5,2)) AS PCT_UTIL,CAST((CAPACITY/1024/100)*NULLIF(PCT_UTIL,0) AS DECIMAL(12,2)) AS USED_GB,BACKUP_START,BACKUP_END FROM FILESPACES WHERE FILESPACE_TYPE NOT IN ('VSS') AND FILESPACE_TYPE NOT LIKE 'API:%%' ORDER BY NODE_NAME,FILESPACE_NAME",
     outputFile:'doc_10_filespaces.csv' },
 
   // ── Policy ───────────────────────────────────────────────────────────────
@@ -543,7 +541,8 @@ const DOC_QUERIES = [
     outputFile:'doc_36_containers.csv' },
 
   { id:'doc_37_stgrules', title:'Storage Rules (v8.1.8+)', section:'Advanced_v8', v8only:true,
-    // ORDER BY 1 avoids rc=3 if the rule-name column has a different name in this fix pack.
+    // SELECT * to avoid rc=3 from version-specific column names. ORDER BY 1 (typically RULE_NAME/NAME)
+    // is safe regardless of exact first-column name on this fix pack.
     sql:"SELECT * FROM STGRULES ORDER BY 1",
     outputFile:'doc_37_stgrules.csv' },
 
