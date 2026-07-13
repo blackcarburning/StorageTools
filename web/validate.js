@@ -150,7 +150,7 @@ if (idFileMismatches === 0) ok('All IDs match their outputFile base names');
 
 // ─── 5. Known-invalid column references ──────────────────────────────────────
 section('5. No known-invalid SQL column references');
-// These column names were identified as wrong in the problem statement.
+// These column names were identified as wrong against IBM SP documentation.
 const bannedCols = [
   { pattern: /\bSERVER_TYPE\b/i,  context: 'SERVERS view (not documented for v8.1.27)' },
   // RULE_TYPE in STGRULES is wrong (should be TYPE per IBM docs);
@@ -162,6 +162,23 @@ const bannedCols = [
   { pattern: /\bDESCRIPTION\b.*\bPROCESSES\b|\bPROCESSES\b.*\bDESCRIPTION\b/is,
                                   context: 'PROCESSES (DESCRIPTION not in documented columns)' },
   { pattern: /\bPCT_COMPLETE\b/i, context: 'PROCESSES (PCT_COMPLETE not in documented columns)' },
+  // DB view: wrong column names confirmed by rc=3 in the field.
+  { pattern: /\bTOT_FILE_SYSTEM_MB\b/i, context: 'DB view (wrong name; use TOTAL_SPACE_MB)' },
+  { pattern: /\bUSED_DB_SPACE_MB\b/i,   context: 'DB view (wrong name; use USED_SPACE_MB)' },
+  { pattern: /\bLAST_REORG\b/i,         context: 'DB view (column does not exist)' },
+  // DBSPACE view: wrong column names confirmed by rc=3 in the field.
+  { pattern: /\bTOTAL_FS_SIZE_MB\b/i,   context: 'DBSPACE view (wrong name; use TOTAL_SPACE_MB)' },
+  { pattern: /\bUSED_FS_SIZE_MB\b/i,    context: 'DBSPACE view (wrong name; use USED_SPACE_MB)' },
+  // NODES view: non-existent or wrong column names confirmed by rc=3 in the field.
+  { pattern: /\bTCP_NAME\b/i,           context: 'NODES view (column does not exist)' },
+  { pattern: /\bSESSION_INITIATION\b/i, context: 'NODES view (wrong name; use SESSIONSECURITY)' },
+  { pattern: /\bCLIENT_OS_LEVEL\b/i,    context: 'NODES view (column not in standard NODES view)' },
+  // ADMINS view: wrong column names confirmed by rc=3 in the field.
+  { pattern: /\bLAST_ACCESS\b.*ADMINS|ADMINS.*\bLAST_ACCESS\b/is,
+                                         context: 'ADMINS view (wrong name; use LASTACC_TIME)' },
+  // CLIENT_SCHEDULES view: SCHED_STYLE not present in CLIENT_SCHEDULES on all v8.1.x servers.
+  { pattern: /\bSCHED_STYLE\b.*CLIENT_SCHEDULES|CLIENT_SCHEDULES.*\bSCHED_STYLE\b/is,
+                                         context: 'CLIENT_SCHEDULES (column absent on many v8.1.x; present in ADMIN_SCHEDULES only)' },
 ];
 let bannedFound = 0;
 for (const q of allQueries) {
@@ -173,6 +190,19 @@ for (const q of allQueries) {
   }
 }
 if (bannedFound === 0) ok('No known-invalid column references found');
+
+// ─── 5b. Date arithmetic spacing ─────────────────────────────────────────────
+section('5b. Date arithmetic spacing (CURRENT_TIMESTAMP interval)');
+// CURRENT_TIMESTAMP-N DAYS without a space before N is a DB2 parse error.
+// Correct form: CURRENT_TIMESTAMP - N DAYS  (space on both sides of operator).
+let badDateArith = 0;
+for (const q of allQueries) {
+  if (/CURRENT_TIMESTAMP-[0-9]/i.test(q.sql)) {
+    fail(`Query ${q.id} has unspaced date arithmetic (CURRENT_TIMESTAMP-N): add spaces around the minus`);
+    badDateArith++;
+  }
+}
+if (badDateArith === 0) ok('All CURRENT_TIMESTAMP interval expressions are correctly spaced');
 
 // ─── 6. Division-by-zero guards ──────────────────────────────────────────────
 section('6. Division-by-zero guards (NULLIF) on percentage calculations');
@@ -331,6 +361,65 @@ for (const q of HEALTH_QUERIES) {
   }
 }
 if (unmappedSections === 0) ok('All query sections are mapped to XLSX sheets');
+
+// ─── 11. RC translation tests ────────────────────────────────────────────────
+section('11. RC translation in generated scripts');
+
+// SH: rc_info function and case statement
+const shRcChecks = [
+  ['defines rc_info function',            /^rc_info\(\)/m],
+  ['rc_info uses POSIX case statement',   /case "\$1" in/],
+  ['rc_info maps 0 to RC_OK (OK)',        /0\).*RC_SYM="RC_OK".*RC_SEV="OK"/],
+  ['rc_info maps 3 to RC_SYNTAX (FAIL)',  /3\).*RC_SYM="RC_SYNTAX".*RC_SEV="FAIL"/],
+  ['rc_info maps 11 to RC_NOTFOUND (WARN)', /11\).*RC_SYM="RC_NOTFOUND".*RC_SEV="WARN"/],
+  ['rc_info maps 28 to RC_NOTABLE (FAIL)', /28\).*RC_SYM="RC_NOTABLE".*RC_SEV="FAIL"/],
+  ['rc_info maps 35 to RC_CANCELED (WARN)', /35\).*RC_SYM="RC_CANCELED".*RC_SEV="WARN"/],
+  ['rc_info maps 137 to DSM_RC_AUTH_FAILURE', /137\).*RC_SYM="DSM_RC_AUTH_FAILURE"/],
+  ['rc_info maps unknown to RC_UNKNOWN_VALUE', /\*\).*RC_SYM="RC_UNKNOWN_VALUE"/],
+  ['run_query calls rc_info',             /rc_info "\$QRC"/],
+  ['run_query uses RC_SEV for WARN',      /\[ "\$RC_SEV" = "WARN" \]/],
+  ['run_query shows RC_SYM in output',    /echo.*\$RC_SYM/],
+  ['run_query log includes RC_SYM',       /\$LOGFILE.*\$RC_SYM|\$RC_SYM.*\$LOGFILE/],
+  ['counter uses QSTATUS not QRC',        /QSTATUS.*\[FAILED\].*FAIL_COUNT|\[ "\$QSTATUS" = "\[FAILED\]" \]/],
+  ['preflight calls rc_info',             /rc_info "\$PREFLIGHT_RC"/],
+];
+for (const [desc, pattern] of shRcChecks) {
+  if (pattern.test(shDoc)) {
+    ok(`SH: ${desc}`);
+  } else {
+    fail(`SH: missing — ${desc} (pattern: ${pattern})`);
+  }
+}
+
+// CMD: :RCInfo subroutine and per-query integration
+const cmdRcChecks = [
+  ['defines :RCInfo subroutine',           /^:RCInfo$/m],
+  ['RCInfo maps 0 to RC_OK (OK)',          /"0".*RC_OK.*RC_SEV.*OK/],
+  ['RCInfo maps 3 to RC_SYNTAX',           /"3".*RC_SYNTAX/],
+  ['RCInfo maps 11 to RC_NOTFOUND (WARN)', /"11".*RC_NOTFOUND.*RC_SEV.*WARN/],
+  ['RCInfo maps 28 to RC_NOTABLE',         /"28".*RC_NOTABLE/],
+  ['RCInfo maps 35 to RC_CANCELED (WARN)', /"35".*RC_CANCELED.*RC_SEV.*WARN/],
+  ['RCInfo maps 137 to DSM_RC_AUTH_FAILURE', /"137".*DSM_RC_AUTH_FAILURE/],
+  ['per-query CALL :RCInfo',               /CALL :RCInfo %QRC%/],
+  ['per-query uses RC_SEV for WARN',       /RC_SEV.*WARN.*QSTATUS.*WARN/i],
+  ['per-query shows RC_SYM in console',    /echo.*%RC_SYM%/],
+  ['per-query log includes RC_SYM',        /%RC_SYM%.*collection_log/],
+  ['tracks PASS_COUNT',                    /PASS_COUNT=0/],
+  ['tracks WARN_COUNT',                    /WARN_COUNT=0/],
+  ['tracks FAIL_COUNT',                    /FAIL_COUNT=0/],
+  ['increments PASS_COUNT per query',      /PASS_COUNT\+=1/],
+  ['increments WARN_COUNT per query',      /WARN_COUNT\+=1/],
+  ['increments FAIL_COUNT per query',      /FAIL_COUNT\+=1/],
+  ['summary shows Passed/Warned/Failed',   /Passed:.*PASS_COUNT.*Warned:.*WARN_COUNT.*Failed:.*FAIL_COUNT/],
+  ['preflight CALL :RCInfo',               /CALL :RCInfo %PREFLIGHT_RC%/],
+];
+for (const [desc, pattern] of cmdRcChecks) {
+  if (pattern.test(cmdDoc)) {
+    ok(`CMD: ${desc}`);
+  } else {
+    fail(`CMD: missing — ${desc} (pattern: ${pattern})`);
+  }
+}
 
 // ─── Summary ──────────────────────────────────────────────────────────────────
 console.log(`\n${'='.repeat(60)}`);

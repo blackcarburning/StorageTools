@@ -193,6 +193,56 @@ This web helper is an independent addition and does not modify or replace the Pe
 | v8-only queries fail | Expected on SP v7 and earlier; the error text is now echoed to the console in real time and appended with context to `collection_errors.log`. Core queries still succeed. |
 | Password with `%` breaks CMD | Double the `%` character in the `SET "ADMPA=..."` line of the CMD file |
 | `ANS1051I Invalid user id or password` | Verify the Admin User ID and password. On Unix/Linux, also verify that the option file (`-optfile`) points at the intended server — the **Server Name / Label** field in the tool is only a label and does not direct `dsmadmc` to any address. The generated script now runs a connection preflight before all queries and aborts immediately rather than repeating the same failure for every query. |
-| Query shows `[WARN]` status | The dsmadmc return code was 0 (no hard error) but text was written to stderr — review `collection_errors.log` for the ANS message details |
-| Query shows `[FAILED]` status | The dsmadmc return code was non-zero; the stderr output appears on the console immediately and in `collection_errors.log` with the query ID and timestamp |
+| Query shows `[WARN]` status | Either: (a) the dsmadmc return code was 0 but text appeared on stderr — review `collection_errors.log`; or (b) the return code was 11 (`RC_NOTFOUND` — empty result set) or 35 (`RC_CANCELED`) which IBM documents as warnings. See **Return-code translation** below. |
+| Query shows `[FAILED]` status | The dsmadmc return code was non-zero (and not a warning code); the stderr output appears on the console immediately and in `collection_errors.log` with the query ID and timestamp. The return code is now translated to a symbolic name — see **Return-code translation** below. |
 | Schema queries (doc\_40, doc\_41) return no rows | `SYSCAT.TABLES`/`SYSCAT.COLUMNS` may require additional DB2 privileges; ask your DBA to `GRANT SELECT ON SYSCAT.TABLES TO <admin>` |
+
+---
+
+## Return-code translation
+
+Each generated script (both `.sh` and `.cmd`) contains a built-in subroutine (`rc_info` / `:RCInfo`) that maps every dsmadmc numeric return code to its IBM-documented symbolic name and a short description. The translated code and description appear in **both the terminal output and `collection_log.txt`**.
+
+### Example output
+
+```
+[FAILED] Database Information (rc=3 RC_SYNTAX -- invalid command/SQL syntax or parameters)
+[WARN]   Libraries           (rc=11 RC_NOTFOUND -- no matching rows/objects)
+[FAILED] Replication Rules   (rc=28 RC_NOTABLE -- unknown SQL table or view)
+[FAILED] Server Status       (rc=137 DSM_RC_AUTH_FAILURE -- authentication failed)
+```
+
+### Key return codes and their meaning
+
+| RC | Symbol | Severity | Meaning |
+|----|--------|----------|---------|
+| 0 | `RC_OK` | OK | Command completed successfully |
+| 3 | `RC_SYNTAX` | FAILED | Command/SQL syntax error, an invalid or missing column, or invalid command parameters. Consult `collection_errors.log` for the full ANS message identifying the offending token. Possible causes: invalid column name in the SELECT list, invalid ORDER BY reference, or a command keyword not supported on this server level. |
+| 11 | `RC_NOTFOUND` | **WARN** | QUERY/SELECT returned no matching rows. This is normal for an empty table (e.g. no tape libraries, no DRM media). rc=11 does **not** count as a failure; the query ran successfully but found nothing to report. |
+| 28 | `RC_NOTABLE` | FAILED | The SQL view or table referenced in the query does not exist on this server. This typically means the feature (e.g. Retention Sets, Replication Rules) is not available on the installed server version. Check `collection_errors.log` for the view name, then confirm the minimum supported server version. |
+| 35 | `RC_CANCELED` | **WARN** | Command was cancelled (e.g. by a running process holding a lock). Not a permanent error. |
+| 137 | `DSM_RC_AUTH_FAILURE` | FAILED | Authentication failure — invalid admin ID or password. The script aborts immediately; check credentials and the option file path. |
+| other | `RC_UNKNOWN_VALUE` | FAILED | An undocumented or unexpected return code. Inspect `collection_errors.log` for ANS messages from that query run. |
+
+### Notes on rc=3
+
+rc=3 (`RC_SYNTAX`) nearly always means one of:
+
+1. **A column name does not exist in the view** — e.g. `TCP_NAME` was removed in a later IBM SP version; use `TCP_ADDRESS` instead.
+2. **A column is missing from the server's installed level** — e.g. `SESSIONSECURITY` requires SP v8.1.2+; `CLOUDTYPE` requires SP v8.1.3+.
+3. **A SQL operator is malformed** — e.g. `CURRENT_TIMESTAMP-30 DAYS` (missing spaces) is a DB2 parse error; use `CURRENT_TIMESTAMP - 30 DAYS`.
+
+The detailed ANS message in `collection_errors.log` will identify the token causing the error.
+
+### Notes on rc=28
+
+rc=28 (`RC_NOTABLE`) means the view/table does not exist on the connected server.  The two most common cases in the generated script are:
+
+- **Replication Rules** — present only if Replication has been configured.
+- **Retention Sets** — added in SP v8.1.4; not available on earlier servers.
+
+These failures are expected on plain-vanilla SP installations and do not indicate a script defect. The affected queries are annotated in the generated script with a version note.
+
+### Primary diagnosis tool
+
+All dsmadmc stderr messages are mirrored to the terminal at runtime **and** persisted in `collection_errors.log` with the query ID and timestamp. For any non-zero return code this file is the primary source of diagnostic information.
