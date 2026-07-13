@@ -11,6 +11,9 @@
  *  6. Generated CMD content contains the expected per-query diagnostic markers.
  *  7. Generated SH content uses run_query, traps, and produces counters.
  *  8. Every query section maps to a known XLSX sheet section.
+ *  9. Generated SH has no unsafe printf format strings beginning with a hyphen.
+ * 10. Generated SH includes preflight and ANS1051I fatal handling.
+ * 11. Generated CMD includes preflight and ANS1051I fatal handling.
  *
  * Usage:  node web/validate.js
  * Exit:   0 = all checks passed, 1 = one or more failures.
@@ -240,6 +243,10 @@ const cmdChecks = [
   ['echoes stderr to console', /TYPE ".*qerr\.tmp"/],
   ['appends stderr to errors log', /TYPE ".*qerr\.tmp" >> ".*collection_errors\.log"/],
   ['deletes temp file', /DEL ".*qerr\.tmp"/],
+  ['has authentication preflight', /PREFLIGHT_RC=%ERRORLEVEL%/],
+  ['preflight aborts on failure', /EXIT \/B 1/],
+  ['detects ANS1051I in CMD preflight', /FINDSTR.*ANS1051I.*preflight/i],
+  ['detects ANS1051I per-query and aborts', /ANS1051_FATAL/],
 ];
 for (const [desc, pattern] of cmdChecks) {
   if (pattern.test(cmdDoc)) {
@@ -255,6 +262,7 @@ const shChecks = [
   ['truncates log files at startup', /: > "\$LOGFILE"/],
   ['truncates error log at startup', /: > "\$ERRLOG"/],
   ['defines cleanup trap', /trap cleanup EXIT INT TERM/],
+  ['cleanup trap handles PREFLIGHT_TMP', /PREFLIGHT_TMP.*rm -f.*PREFLIGHT_TMP|rm -f.*PREFLIGHT_TMP/],
   ['defines run_query function', /^run_query\(\)/m],
   ['uses mktemp for temp file', /mktemp/],
   ['captures stderr to temp file', /2>"\$QTMP"/],
@@ -269,6 +277,11 @@ const shChecks = [
   ['removes temp file', /rm -f "\$QTMP"/],
   ['calls run_query for each query', /^run_query /m],
   ['prints final summary counts', /Passed:.*Warned:.*Failed:/],
+  ['has authentication preflight before queries', /PREFLIGHT_TMP.*mktemp|mktemp.*PREFLIGHT_TMP/],
+  ['preflight runs QUERY SESSION', /run_dsmadmc.*QUERY SESSION/],
+  ['preflight checks PREFLIGHT_RC', /PREFLIGHT_RC=\$\?/],
+  ['preflight aborts with exit 1 on failure', /PREFLIGHT_RC.*-ne 0[\s\S]{0,600}exit 1/],
+  ['ANS1051I fatal check inside run_query', /grep.*ANS1051I.*QTMP|ANS1051I.*grep/i],
 ];
 for (const [desc, pattern] of shChecks) {
   if (pattern.test(shDoc)) {
@@ -278,8 +291,25 @@ for (const [desc, pattern] of shChecks) {
   }
 }
 
-// ─── 9. XLSX sheet section coverage ──────────────────────────────────────────
-section('9. All query sections map to a known XLSX sheet');
+// ─── 9. SH printf safety ─────────────────────────────────────────────────────
+section('9. Generated SH printf safety');
+// No printf format string may begin with a hyphen (would be misinterpreted as an option)
+const unsafePrintf = /printf\s+'-[^']/;
+if (unsafePrintf.test(shDoc)) {
+  fail('SH: contains printf with format string beginning with a hyphen (unsafe — use printf \'%s\\n\' "..." instead)');
+} else {
+  ok('SH: no printf format string begins with a hyphen');
+}
+// The specific bad pattern from the bug report must not appear
+const badPrintfPattern = /printf\s+'---/;
+if (badPrintfPattern.test(shDoc)) {
+  fail("SH: contains printf '--- (format string starting with --- — triggers 'invalid option' in bash/POSIX sh)");
+} else {
+  ok("SH: no printf '--- pattern (fixed: uses printf '%s\\n' \"--- ...\" instead)");
+}
+
+// ─── 10. XLSX sheet section coverage ─────────────────────────────────────────
+section('10. All query sections map to a known XLSX sheet');
 const knownDocSections = new Set([
   'Server','Admins','Nodes','Filespaces','Occupancy','Policy','Schedules',
   'Storage','Volumes','Replication','DR','Advanced_v8','Scripts','Schema'

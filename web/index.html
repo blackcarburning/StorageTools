@@ -151,6 +151,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       <div class="fg">
         <label>Server Name / Label</label>
         <input type="text" id="serverName" placeholder="TSMSERVER01">
+        <span class="hint">Used to name output files only — <strong>does not select the target server</strong>. The target is determined by the configured option file (or the administrative client's default options).</span>
       </div>
       <div class="fg">
         <label>Customer Name</label>
@@ -799,6 +800,31 @@ function generateCmdContent(type) {
   lines.push('REM Initialise/clear error log so stale entries are not mistaken for current results.');
   lines.push('type nul > "%OUTDIR%\\collection_errors.log"');
   lines.push('');
+  lines.push('REM === Authentication preflight — verify credentials before running all queries. ===');
+  lines.push('REM Aborts on ANS1051I or any nonzero return code, preventing repeated failures.');
+  lines.push('echo Checking server connection and credentials...');
+  lines.push('"%DSMADMC%" -id=%ADMID% -pa=%ADMPA% %OPTARG% -commadelimited "QUERY SESSION" > NUL 2>"%OUTDIR%\\preflight.tmp"');
+  lines.push('SET PREFLIGHT_RC=%ERRORLEVEL%');
+  lines.push('SET PREFLIGHT_AUTH=1');
+  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" FINDSTR /I "ANS1051I" "%OUTDIR%\\preflight.tmp" > NUL 2>&1 && SET PREFLIGHT_AUTH=0');
+  lines.push('IF NOT %PREFLIGHT_RC%==0 GOTO :PREFLIGHT_FAIL');
+  lines.push('IF %PREFLIGHT_AUTH%==0 GOTO :PREFLIGHT_FAIL');
+  lines.push('echo Preflight OK -- connection verified.');
+  lines.push('echo.');
+  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" DEL "%OUTDIR%\\preflight.tmp"');
+  lines.push('GOTO :QUERIES_START');
+  lines.push('');
+  lines.push(':PREFLIGHT_FAIL');
+  lines.push('echo [FATAL] Preflight authentication/connection check failed (rc=%PREFLIGHT_RC%) 1>&2');
+  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" TYPE "%OUTDIR%\\preflight.tmp" 1>&2');
+  lines.push('echo --- PREFLIGHT FAILED (rc=%PREFLIGHT_RC%) --- >> "%OUTDIR%\\collection_errors.log"');
+  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" TYPE "%OUTDIR%\\preflight.tmp" >> "%OUTDIR%\\collection_errors.log"');
+  lines.push('echo %DATE% %TIME% [FATAL] Preflight failed rc=%PREFLIGHT_RC% -- collection aborted >> "%OUTDIR%\\collection_log.txt"');
+  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" DEL "%OUTDIR%\\preflight.tmp"');
+  lines.push('EXIT /B 1');
+  lines.push('');
+  lines.push(':QUERIES_START');
+  lines.push('');
 
   queries.forEach((q, idx) => {
     const num = String(idx + 1).padStart(2, '0');
@@ -825,7 +851,15 @@ function generateCmdContent(type) {
     lines.push('  TYPE "%OUTDIR%\\qerr.tmp" >> "%OUTDIR%\\collection_errors.log"');
     lines.push('  echo. >> "%OUTDIR%\\collection_errors.log"');
     lines.push(')');
+    lines.push('SET ANS1051_FATAL=0');
+    lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" FINDSTR /I "ANS1051I" "%OUTDIR%\\qerr.tmp" > NUL 2>&1');
+    lines.push('IF %ERRORLEVEL%==0 SET ANS1051_FATAL=1');
     lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" DEL "%OUTDIR%\\qerr.tmp"');
+    lines.push('IF %ANS1051_FATAL%==1 (');
+    lines.push('  echo [FATAL] ANS1051I authentication failure detected -- aborting collection 1>&2');
+    lines.push(`  echo %DATE% %TIME% [FATAL] ANS1051I in [${num}/${total}] ${q.title} -- collection aborted >> "%OUTDIR%\\collection_log.txt"`);
+    lines.push('  EXIT /B 1');
+    lines.push(')');
     lines.push('');
   });
 
@@ -913,6 +947,7 @@ function generateShContent(type) {
   lines.push('FAIL_COUNT=0');
   lines.push('WARN_COUNT=0');
   lines.push('QTMP=""');
+  lines.push('PREFLIGHT_TMP=""');
   lines.push('');
   lines.push('mkdir -p "$OUTDIR"');
   lines.push('');
@@ -921,7 +956,7 @@ function generateShContent(type) {
   lines.push(': > "$ERRLOG"');
   lines.push('');
   lines.push('# Cleanup handler for per-query temp file on exit or interrupt.');
-  lines.push('cleanup() { [ -n "$QTMP" ] && rm -f "$QTMP"; }');
+  lines.push('cleanup() { [ -n "$QTMP" ] && rm -f "$QTMP"; [ -n "$PREFLIGHT_TMP" ] && rm -f "$PREFLIGHT_TMP"; }');
   lines.push('trap cleanup EXIT INT TERM');
   lines.push('');
   lines.push('echo "================================================================="');
@@ -968,9 +1003,14 @@ function generateShContent(type) {
   lines.push('  echo "  $QSTATUS $QTITLE (rc=$QRC)"');
   lines.push('  printf \'%s %s [%s] %s rc=%s\\n\' "$(date)" "$QSTATUS" "$QNUM" "$QTITLE" "$QRC" >> "$LOGFILE"');
   lines.push('  if [ -s "$QTMP" ]; then');
-  lines.push('    printf \'--- %s [%s] %s ---\\n\' "$(date)" "$QNUM" "$QTITLE" >> "$ERRLOG"');
+  lines.push('    printf \'%s\\n\' "--- $(date) [$QNUM] $QTITLE ---" >> "$ERRLOG"');
   lines.push('    tee -a "$ERRLOG" < "$QTMP" >&2');
   lines.push('    printf \'\\n\' >> "$ERRLOG"');
+  lines.push('    if grep -qi \'ANS1051I\' "$QTMP"; then');
+  lines.push('      printf \'%s\\n\' "$(date) [FATAL] ANS1051I authentication failure in [$QNUM] $QTITLE — aborting collection" >> "$LOGFILE"');
+  lines.push('      rm -f "$QTMP"; QTMP=""');
+  lines.push('      exit 1');
+  lines.push('    fi');
   lines.push('  fi');
   lines.push('  rm -f "$QTMP"; QTMP=""');
   lines.push('  if [ "$QRC" -ne 0 ]; then');
@@ -981,6 +1021,25 @@ function generateShContent(type) {
   lines.push('    PASS_COUNT=$((PASS_COUNT + 1))');
   lines.push('  fi');
   lines.push('}');
+  lines.push('');
+  lines.push('# Connection/authentication preflight — verify credentials before running all queries.');
+  lines.push('# Aborts immediately on ANS1051I or any nonzero return code, saving a failure per query.');
+  lines.push('PREFLIGHT_TMP="$(mktemp 2>/dev/null)" || PREFLIGHT_TMP="${OUTDIR}/preflight$$.tmp"');
+  lines.push('echo "Checking server connection and credentials..."');
+  lines.push('run_dsmadmc \'QUERY SESSION\' > /dev/null 2>"$PREFLIGHT_TMP"');
+  lines.push('PREFLIGHT_RC=$?');
+  lines.push('if [ "$PREFLIGHT_RC" -ne 0 ] || grep -qi \'ANS1051I\' "$PREFLIGHT_TMP" 2>/dev/null; then');
+  lines.push('  printf \'%s\\n\' "[FATAL] Preflight authentication/connection check failed (rc=$PREFLIGHT_RC)" >&2');
+  lines.push('  cat "$PREFLIGHT_TMP" >&2');
+  lines.push('  printf \'%s\\n\' "--- PREFLIGHT FAILED (rc=$PREFLIGHT_RC) ---" >> "$ERRLOG"');
+  lines.push('  cat "$PREFLIGHT_TMP" >> "$ERRLOG"');
+  lines.push('  printf \'%s\\n\' "$(date) [FATAL] Preflight failed rc=$PREFLIGHT_RC — collection aborted" >> "$LOGFILE"');
+  lines.push('  rm -f "$PREFLIGHT_TMP"; PREFLIGHT_TMP=""');
+  lines.push('  exit 1');
+  lines.push('fi');
+  lines.push('rm -f "$PREFLIGHT_TMP"; PREFLIGHT_TMP=""');
+  lines.push('echo "Preflight OK — connection verified."');
+  lines.push('echo');
   lines.push('');
 
   queries.forEach((q, idx) => {

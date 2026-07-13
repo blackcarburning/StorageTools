@@ -28,7 +28,7 @@ Fill in:
 - **Unix/Linux path to `dsmadmc`** — e.g. `/opt/tivoli/tsm/client/ba/bin/dsmadmc` (used for `.sh`)
 - **Admin User ID** and **Password** — a Spectrum Protect admin with at least `ANALYST` privilege
 - **Option file path** — optional, leave blank if the server is reached without an options file
-- **Server name / label** — used to name output files (no functional impact)
+- **Server name / label** — used to name output files only; **does not select the target server**. The target server is determined by the configured option file (or the administrative client's default options). For example, entering `192.168.1.81` here does not direct `dsmadmc` to that address — only the option file (or the client's built-in default) controls which server is contacted.
 - **Customer name** — included in report headers
 - **Output directory/path** — where collection CSVs are written by either script type (default: `StorageTools_Output`)
 
@@ -192,6 +192,7 @@ This web helper is an independent addition and does not modify or replace the Pe
 | XLSX download button does nothing | Confirm your browser allows downloads from local files and review the browser console for any client-side errors |
 | v8-only queries fail | Expected on SP v7 and earlier; the error text is now echoed to the console in real time and appended with context to `collection_errors.log`. Core queries still succeed. |
 | Password with `%` breaks CMD | Double the `%` character in the `SET "ADMPA=..."` line of the CMD file |
+| `ANS1051I Invalid user id or password` | Verify the Admin User ID and password. On Unix/Linux, also verify that the option file (`-optfile`) points at the intended server — the **Server Name / Label** field in the tool is only a label and does not direct `dsmadmc` to any address. The generated script now runs a connection preflight before all queries and aborts immediately rather than repeating the same failure for every query. |
 | Query shows `[WARN]` status | The dsmadmc return code was 0 (no hard error) but text was written to stderr — review `collection_errors.log` for the ANS message details |
 | Query shows `[FAILED]` status | The dsmadmc return code was non-zero; the stderr output appears on the console immediately and in `collection_errors.log` with the query ID and timestamp |
 | Schema queries (doc\_40, doc\_41) return no rows | `SYSCAT.TABLES`/`SYSCAT.COLUMNS` may require additional DB2 privileges; ask your DBA to `GRANT SELECT ON SYSCAT.TABLES TO <admin>` |
