@@ -377,7 +377,7 @@ const DOC_QUERIES = [
     outputFile:'doc_03_dbspace.csv' },
 
   { id:'doc_04_log', title:'Transaction Log', section:'Server',
-    sql:"SELECT CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_SPACE_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_SPACE_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,CAST(FLOAT(USED_SPACE_MB)/FLOAT(TOTAL_SPACE_MB)*100 AS DECIMAL(5,2)) AS PCT_USED,ACTIVE_LOG_DIR,MIRROR_LOG_DIR,AFAILOVER_LOG_DIR,ARCH_LOG_DIR FROM LOG",
+    sql:"SELECT CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_SPACE_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_SPACE_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,CAST(FLOAT(USED_SPACE_MB)/FLOAT(NULLIF(TOTAL_SPACE_MB,0))*100 AS DECIMAL(5,2)) AS PCT_USED,ACTIVE_LOG_DIR,MIRROR_LOG_DIR,AFAILOVER_LOG_DIR,ARCH_LOG_DIR FROM LOG",
     outputFile:'doc_04_log.csv' },
 
   { id:'doc_05_options', title:'Server Options', section:'Server',
@@ -498,7 +498,7 @@ const DOC_QUERIES = [
 
   // ── Replication ──────────────────────────────────────────────────────────
   { id:'doc_32_servers', title:'Defined Servers (Replication Targets)', section:'Replication',
-    sql:"SELECT SERVER_NAME,HL_ADDRESS,LL_ADDRESS,NODE_NAME,SERVER_TYPE FROM SERVERS ORDER BY SERVER_NAME",
+    sql:"SELECT SERVER_NAME,HL_ADDRESS,LL_ADDRESS,NODE_NAME FROM SERVERS ORDER BY SERVER_NAME",
     outputFile:'doc_32_servers.csv' },
 
   { id:'doc_33_repl_rules', title:'Replication Rules', section:'Replication', v8only:true,
@@ -516,21 +516,33 @@ const DOC_QUERIES = [
 
   // ── Advanced v8 ──────────────────────────────────────────────────────────
   { id:'doc_36_containers', title:'Containers (Directory/Cloud Pools)', section:'Advanced_v8', v8only:true,
-    sql:"SELECT STGPOOL_NAME,CONTAINER_NAME,STATE,TYPE,CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_GB,CAST((TOTAL_SPACE_MB-FREE_SPACE_MB)/1024 AS DECIMAL(12,2)) AS USED_GB FROM CONTAINERS ORDER BY STGPOOL_NAME,STATE,CONTAINER_NAME",
+    sql:"SELECT * FROM CONTAINERS ORDER BY STGPOOL_NAME,STATE,CONTAINER_NAME",
     outputFile:'doc_36_containers.csv' },
 
   { id:'doc_37_stgrules', title:'Storage Rules (v8.1.8+)', section:'Advanced_v8', v8only:true,
-    sql:"SELECT RULE_NAME,RULE_TYPE,SOURCE_STGPOOL_NAME,DEST_STGPOOL_NAME,ENABLED FROM STGRULES ORDER BY RULE_NAME",
+    sql:"SELECT * FROM STGRULES ORDER BY RULE_NAME",
     outputFile:'doc_37_stgrules.csv' },
 
   { id:'doc_38_retsets', title:'Retention Sets (v8.1.4+)', section:'Advanced_v8', v8only:true,
-    sql:"SELECT RETENTIONSET_NAME,DESCRIPTION FROM RETENTIONSETS ORDER BY RETENTIONSET_NAME",
+    sql:"SELECT * FROM RETENTIONSETS ORDER BY 1",
     outputFile:'doc_38_retsets.csv' },
 
   // ── Scripts ───────────────────────────────────────────────────────────────
   { id:'doc_39_scripts', title:'Server Scripts', section:'Scripts',
     sql:"SELECT NAME,LINE,COMMAND FROM SCRIPTS ORDER BY NAME,LINE",
     outputFile:'doc_39_scripts.csv' },
+
+  // ── Schema Discovery ──────────────────────────────────────────────────────
+  // SYSCAT.TABLES/COLUMNS are DB2 system catalog views exposed via the SP SELECT
+  // command. These queries allow users to discover which views and columns exist
+  // on their specific server version or fix-pack level.
+  { id:'doc_40_syscat_sp_views', title:'Schema — SP Views List (SYSCAT.TABLES)', section:'Schema',
+    sql:"SELECT TABNAME,REMARKS FROM SYSCAT.TABLES WHERE TABSCHEMA NOT IN ('SYSIBM','SYSCAT','SYSSTAT','SYSTOOLS') AND TYPE='V' ORDER BY TABNAME",
+    outputFile:'doc_40_syscat_sp_views.csv' },
+
+  { id:'doc_41_syscat_key_cols', title:'Schema — Key View Columns (SYSCAT.COLUMNS)', section:'Schema',
+    sql:"SELECT TABNAME,COLNO,COLNAME,TYPENAME FROM SYSCAT.COLUMNS WHERE TABNAME IN ('PROCESSES','STGRULES','CONTAINERS','RETENTIONSETS','SERVERS','REPLICATIONRULES','SESSIONS') ORDER BY TABNAME,COLNO",
+    outputFile:'doc_41_syscat_key_cols.csv' },
 
 ]; // end DOC_QUERIES
 
@@ -545,7 +557,7 @@ const HEALTH_QUERIES = [
 
   // ── Database ──────────────────────────────────────────────────────────────
   { id:'hc_01_db_space', title:'Database Space Status', section:'HC_Database',
-    sql:"SELECT DATABASE_NAME,CAST(TOT_FILE_SYSTEM_MB/1024 AS DECIMAL(12,2)) AS TOTAL_FS_GB,CAST(USED_DB_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_DB_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_GB,CAST(FLOAT(USED_DB_SPACE_MB)/FLOAT(TOT_FILE_SYSTEM_MB)*100 AS DECIMAL(5,2)) AS DB_PCT_USED,BUFF_HIT_RATIO,PKG_HIT_RATIO,LAST_BACKUP_DATE FROM DB",
+    sql:"SELECT DATABASE_NAME,CAST(TOT_FILE_SYSTEM_MB/1024 AS DECIMAL(12,2)) AS TOTAL_FS_GB,CAST(USED_DB_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_DB_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_GB,CAST(FLOAT(USED_DB_SPACE_MB)/FLOAT(NULLIF(TOT_FILE_SYSTEM_MB,0))*100 AS DECIMAL(5,2)) AS DB_PCT_USED,BUFF_HIT_RATIO,PKG_HIT_RATIO,LAST_BACKUP_DATE FROM DB",
     outputFile:'hc_01_db_space.csv' },
 
   { id:'hc_02_db_backups', title:'Database Backup History (30 days)', section:'HC_Database',
@@ -553,7 +565,7 @@ const HEALTH_QUERIES = [
     outputFile:'hc_02_db_backups.csv' },
 
   { id:'hc_03_log_space', title:'Transaction Log Space Status', section:'HC_Database',
-    sql:"SELECT CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_SPACE_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_SPACE_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,CAST(FLOAT(USED_SPACE_MB)/FLOAT(TOTAL_SPACE_MB)*100 AS DECIMAL(5,2)) AS PCT_USED,ACTIVE_LOG_DIR,ARCH_LOG_DIR FROM LOG",
+    sql:"SELECT CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_SPACE_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_SPACE_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,CAST(FLOAT(USED_SPACE_MB)/FLOAT(NULLIF(TOTAL_SPACE_MB,0))*100 AS DECIMAL(5,2)) AS PCT_USED,ACTIVE_LOG_DIR,ARCH_LOG_DIR FROM LOG",
     outputFile:'hc_03_log_space.csv' },
 
   // ── Storage ───────────────────────────────────────────────────────────────
@@ -583,15 +595,15 @@ const HEALTH_QUERIES = [
 
   // ── Schedules ─────────────────────────────────────────────────────────────
   { id:'hc_10_sched_status', title:'Schedule Event Status — 7 Days', section:'HC_Schedules',
-    sql:"SELECT STATUS,COUNT(*) AS EVENT_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP-7 DAYS AND NODE_NAME IS NOT NULL AND STATUS<>'Pending' GROUP BY STATUS ORDER BY STATUS",
+    sql:"SELECT STATUS,COUNT(*) AS EVENT_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP-7 DAYS AND NODE_NAME IS NOT NULL AND UPPER(STATUS)<>'PENDING' GROUP BY STATUS ORDER BY STATUS",
     outputFile:'hc_10_sched_status.csv' },
 
   { id:'hc_11_sched_failed', title:'Failed Schedules — 7 Days', section:'HC_Schedules',
-    sql:"SELECT NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME,COUNT(*) AS FAIL_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP-7 DAYS AND NODE_NAME IS NOT NULL AND STATUS='Failed' GROUP BY NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME ORDER BY FAIL_COUNT DESC,NODE_NAME",
+    sql:"SELECT NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME,COUNT(*) AS FAIL_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP-7 DAYS AND NODE_NAME IS NOT NULL AND UPPER(STATUS)='FAILED' GROUP BY NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME ORDER BY FAIL_COUNT DESC,NODE_NAME",
     outputFile:'hc_11_sched_failed.csv' },
 
   { id:'hc_12_sched_missed', title:'Missed Schedules — 7 Days', section:'HC_Schedules',
-    sql:"SELECT NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME,COUNT(*) AS MISSED_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP-7 DAYS AND NODE_NAME IS NOT NULL AND STATUS='Missed' GROUP BY NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME ORDER BY MISSED_COUNT DESC,NODE_NAME",
+    sql:"SELECT NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME,COUNT(*) AS MISSED_COUNT FROM EVENTS WHERE SCHEDULED_START>=CURRENT_TIMESTAMP-7 DAYS AND NODE_NAME IS NOT NULL AND UPPER(STATUS)='MISSED' GROUP BY NODE_NAME,SCHEDULE_NAME,DOMAIN_NAME ORDER BY MISSED_COUNT DESC,NODE_NAME",
     outputFile:'hc_12_sched_missed.csv' },
 
   // ── Nodes ─────────────────────────────────────────────────────────────────
@@ -658,8 +670,21 @@ const HEALTH_QUERIES = [
     outputFile:'hc_27_repl_stats.csv' },
 
   { id:'hc_28_processes', title:'Active Processes (Snapshot)', section:'HC_Advanced',
-    sql:"SELECT PROCESS_NUM,STATUS,DESCRIPTION,CAST(PCT_COMPLETE AS DECIMAL(5,2)) AS PCT_COMPLETE FROM PROCESSES ORDER BY PROCESS_NUM",
+    sql:"SELECT PROCESS_NUM,PROCESS,STATUS,SUBSTR(CHAR(START_TIME),1,19) AS START_TIME,FILES_PROCESSED,CAST(BYTES_PROCESSED/1024/1024/1024 AS DECIMAL(12,2)) AS GB_PROCESSED,CAST(BYTES_TO_PROCESS/1024/1024/1024 AS DECIMAL(12,2)) AS GB_TO_PROCESS,JOBID,PROCESS_PARENT FROM PROCESSES ORDER BY PROCESS_NUM",
     outputFile:'hc_28_processes.csv' },
+
+  // ── Additional Health Checks ───────────────────────────────────────────────
+  { id:'hc_29_db_backup_age', title:'Database Backup Age', section:'HC_Database',
+    sql:"SELECT DATABASE_NAME,LAST_BACKUP_DATE,CASE WHEN LAST_BACKUP_DATE IS NULL THEN 9999 ELSE DAYS(CURRENT_DATE)-DAYS(DATE(LAST_BACKUP_DATE)) END AS DAYS_SINCE_BACKUP FROM DB",
+    outputFile:'hc_29_db_backup_age.csv' },
+
+  { id:'hc_30_copy_failures', title:'Storage Pool Copy/Protection Failures (30 days)', section:'HC_Activity',
+    sql:"SELECT SUBSTR(CHAR(START_TIME),1,19) AS START_TIME,ACTIVITY,ENTITY AS STGPOOL,CAST(BYTES/1024/1024/1024 AS DECIMAL(12,2)) AS GB FROM SUMMARY WHERE ACTIVITY IN ('STGPOOL PROTECTION','COPY STGPOOL') AND UPPER(SUCCESSFUL)='NO' AND START_TIME>=CURRENT_TIMESTAMP-30 DAYS ORDER BY START_TIME DESC",
+    outputFile:'hc_30_copy_failures.csv' },
+
+  { id:'hc_31_active_sessions', title:'Active Client Sessions (Snapshot)', section:'HC_Advanced',
+    sql:"SELECT SESSION_ID,CLIENT_NAME,SESSION_TYPE,STATE,WAIT_SECONDS,CAST(BYTES_SENT/1024/1024 AS DECIMAL(12,2)) AS MB_SENT,CAST(BYTES_RECEIVED/1024/1024 AS DECIMAL(12,2)) AS MB_RECEIVED,SUBSTR(CHAR(START_TIME),1,19) AS START_TIME FROM SESSIONS WHERE UPPER(SESSION_TYPE)='NODE' ORDER BY SESSION_ID",
+    outputFile:'hc_31_active_sessions.csv' },
 
 ]; // end HEALTH_QUERIES
 
@@ -700,8 +725,7 @@ function escapeForCmd(sql) {
 function buildCmdLine(cfg, query) {
   const sql      = escapeForCmd(query.sql);
   const outFile  = `%OUTDIR%\\${query.outputFile}`;
-  const errLog   = `%OUTDIR%\\collection_errors.log`;
-  return `"%DSMADMC%" -id=%ADMID% -pa=%ADMPA% %OPTARG% -commadelimited "${sql}" > "${outFile}" 2>>"${errLog}"`;
+  return `"%DSMADMC%" -id=%ADMID% -pa=%ADMPA% %OPTARG% -commadelimited "${sql}" > "${outFile}" 2>"%OUTDIR%\\qerr.tmp"`;
 }
 
 function generateCmdContent(type) {
@@ -769,6 +793,9 @@ function generateCmdContent(type) {
   lines.push(`echo Customer: ${cfg.customerName || '(not set)'} >> "%OUTDIR%\\collection_log.txt"`);
   lines.push(`echo Server  : ${cfg.serverName   || '(not set)'} >> "%OUTDIR%\\collection_log.txt"`);
   lines.push('');
+  lines.push('REM Initialise/clear error log so stale entries are not mistaken for current results.');
+  lines.push('type nul > "%OUTDIR%\\collection_errors.log"');
+  lines.push('');
 
   queries.forEach((q, idx) => {
     const num = String(idx + 1).padStart(2, '0');
@@ -779,6 +806,23 @@ function generateCmdContent(type) {
     }
     lines.push(`echo [${num}/${total}] ${q.title}${v8note}...`);
     lines.push(buildCmdLine(cfg, q));
+    lines.push('SET QRC=%ERRORLEVEL%');
+    lines.push('SET QSTATUS=[OK]');
+    lines.push('IF NOT %QRC%==0 SET QSTATUS=[FAILED]');
+    lines.push('IF %QRC%==0 (');
+    lines.push('  FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO IF %%~zS GTR 0 SET QSTATUS=[WARN]');
+    lines.push(')');
+    lines.push(`echo   %QSTATUS% [${num}/${total}] ${q.title} (rc=%QRC%)`);
+    lines.push(`echo %DATE% %TIME% %QSTATUS% [${num}/${total}] ${q.title} rc=%QRC% >> "%OUTDIR%\\collection_log.txt"`);
+    lines.push('FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO IF %%~zS GTR 0 (');
+    lines.push(`  echo --- Stderr for [${num}/${total}] ${q.title} ---`);
+    lines.push('  TYPE "%OUTDIR%\\qerr.tmp"');
+    lines.push('  echo --- End stderr ---');
+    lines.push(`  echo %DATE% %TIME% --- [${num}/${total}] ${q.title} --- >> "%OUTDIR%\\collection_errors.log"`);
+    lines.push('  TYPE "%OUTDIR%\\qerr.tmp" >> "%OUTDIR%\\collection_errors.log"');
+    lines.push('  echo. >> "%OUTDIR%\\collection_errors.log"');
+    lines.push(')');
+    lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" DEL "%OUTDIR%\\qerr.tmp"');
     lines.push('');
   });
 
@@ -787,7 +831,8 @@ function generateCmdContent(type) {
   lines.push(`echo ${label} collection complete: %DATE% %TIME%`);
   lines.push('echo Results saved to: %OUTDIR%');
   lines.push('echo.');
-  lines.push('echo Review "%OUTDIR%\\collection_errors.log" for any query failures.');
+  lines.push('echo Per-query status: "%OUTDIR%\\collection_log.txt"');
+  lines.push('echo Errors (if any) : "%OUTDIR%\\collection_errors.log"');
   lines.push('echo.');
   lines.push('echo *** REMINDER: Delete this CMD file after generating your report! ***');
   lines.push('echo =================================================================');
@@ -819,9 +864,11 @@ function shellQuote(value) {
   return "'" + s.replace(/'/g, "'\"'\"'") + "'";
 }
 
-function buildShLine(query) {
-  const sql = shellQuote(query.sql);
-  return `run_dsmadmc ${sql} > "$OUTDIR/${query.outputFile}" 2>>"$ERRLOG"`;
+function buildShLine(query, numStr, total) {
+  const sql   = shellQuote(query.sql);
+  const title = shellQuote(query.title);
+  const num   = shellQuote(`${numStr}/${total}`);
+  return `run_query ${num} ${title} ${sql} "$OUTDIR/${query.outputFile}"`;
 }
 
 function generateShContent(type) {
@@ -857,9 +904,22 @@ function generateShContent(type) {
   lines.push(`OUTDIR=${shellQuote(cfg.outputDirUnix || DEFAULT_OUTPUT_DIR)}`);
   lines.push(`CUSTOMER=${shellQuote(cfg.customerName || '(not set)')}`);
   lines.push(`SERVER=${shellQuote(cfg.serverName || '(not set)')}`);
+  lines.push('LOGFILE="$OUTDIR/collection_log.txt"');
   lines.push('ERRLOG="$OUTDIR/collection_errors.log"');
+  lines.push('PASS_COUNT=0');
+  lines.push('FAIL_COUNT=0');
+  lines.push('WARN_COUNT=0');
+  lines.push('QTMP=""');
   lines.push('');
   lines.push('mkdir -p "$OUTDIR"');
+  lines.push('');
+  lines.push('# Truncate logs at startup so stale entries are not mistaken for current results.');
+  lines.push(': > "$LOGFILE"');
+  lines.push(': > "$ERRLOG"');
+  lines.push('');
+  lines.push('# Cleanup handler for per-query temp file on exit or interrupt.');
+  lines.push('cleanup() { [ -n "$QTMP" ] && rm -f "$QTMP"; }');
+  lines.push('trap cleanup EXIT INT TERM');
   lines.push('');
   lines.push('echo "================================================================="');
   lines.push(`echo "IBM Storage Protect — ${label} Collection"`);
@@ -870,15 +930,52 @@ function generateShContent(type) {
   lines.push('echo "Output : $OUTDIR"');
   lines.push('echo');
   lines.push('');
-  lines.push(`printf '%s\\n' "$(date) — ${label} collection started" > "$OUTDIR/collection_log.txt"`);
-  lines.push(`printf '%s\\n' "Customer: $CUSTOMER" >> "$OUTDIR/collection_log.txt"`);
-  lines.push(`printf '%s\\n' "Server  : $SERVER" >> "$OUTDIR/collection_log.txt"`);
+  lines.push(`printf '%s\\n' "$(date) — ${label} collection started" >> "$LOGFILE"`);
+  lines.push(`printf '%s\\n' "Customer: $CUSTOMER" >> "$LOGFILE"`);
+  lines.push(`printf '%s\\n' "Server  : $SERVER" >> "$LOGFILE"`);
   lines.push('');
+  lines.push('# dsmadmc wrapper — selects optfile variant automatically.');
   lines.push('run_dsmadmc() {');
   lines.push('  if [ -n "$OPTFILE" ]; then');
   lines.push('    "$DSMADMC" -id="$ADMID" -pa="$ADMPA" -optfile="$OPTFILE" -commadelimited "$1"');
   lines.push('  else');
   lines.push('    "$DSMADMC" -id="$ADMID" -pa="$ADMPA" -commadelimited "$1"');
+  lines.push('  fi');
+  lines.push('}');
+  lines.push('');
+  lines.push('# run_query QNUM QTITLE QSQL QOUT');
+  lines.push('#   Runs one dsmadmc query: stdout→CSV, stderr→temp file then console+errlog.');
+  lines.push('#   Sets QSTATUS to [OK], [WARN] (rc=0 but stderr), or [FAILED] (rc!=0).');
+  lines.push('#   Increments PASS_COUNT/WARN_COUNT/FAIL_COUNT accordingly.');
+  lines.push('run_query() {');
+  lines.push('  QNUM="$1"; QTITLE="$2"; QSQL="$3"; QOUT="$4"');
+  lines.push('  QTMP="$(mktemp 2>/dev/null)" || QTMP="${OUTDIR}/q$$.tmp"');
+  lines.push('  echo "[$QNUM] $QTITLE..."');
+  lines.push('  run_dsmadmc "$QSQL" > "$QOUT" 2>"$QTMP"');
+  lines.push('  QRC=$?');
+  lines.push('  if [ "$QRC" -eq 0 ]; then');
+  lines.push('    if [ -s "$QTMP" ]; then');
+  lines.push('      QSTATUS="[WARN]"');
+  lines.push('    else');
+  lines.push('      QSTATUS="[OK]"');
+  lines.push('    fi');
+  lines.push('  else');
+  lines.push('    QSTATUS="[FAILED]"');
+  lines.push('  fi');
+  lines.push('  echo "  $QSTATUS $QTITLE (rc=$QRC)"');
+  lines.push('  printf \'%s %s [%s] %s rc=%s\\n\' "$(date)" "$QSTATUS" "$QNUM" "$QTITLE" "$QRC" >> "$LOGFILE"');
+  lines.push('  if [ -s "$QTMP" ]; then');
+  lines.push('    printf \'--- %s [%s] %s ---\\n\' "$(date)" "$QNUM" "$QTITLE" >> "$ERRLOG"');
+  lines.push('    tee -a "$ERRLOG" < "$QTMP" >&2');
+  lines.push('    printf \'\\n\' >> "$ERRLOG"');
+  lines.push('  fi');
+  lines.push('  rm -f "$QTMP"; QTMP=""');
+  lines.push('  if [ "$QRC" -ne 0 ]; then');
+  lines.push('    FAIL_COUNT=$((FAIL_COUNT + 1))');
+  lines.push('  elif [ "$QSTATUS" = "[WARN]" ]; then');
+  lines.push('    WARN_COUNT=$((WARN_COUNT + 1))');
+  lines.push('  else');
+  lines.push('    PASS_COUNT=$((PASS_COUNT + 1))');
   lines.push('  fi');
   lines.push('}');
   lines.push('');
@@ -890,8 +987,7 @@ function generateShContent(type) {
     if (q.v8only) {
       lines.push('# Table may not exist on pre-v8 servers; failure captured to errors log.');
     }
-    lines.push(`echo "[${num}/${total}] ${q.title}${v8note}..."`);
-    lines.push(buildShLine(q));
+    lines.push(buildShLine(q, num, total));
     lines.push('');
   });
 
@@ -900,12 +996,14 @@ function generateShContent(type) {
   lines.push(`echo "${label} collection complete: $(date)"`);
   lines.push('echo "Results saved to: $OUTDIR"');
   lines.push('echo');
-  lines.push('echo "Review $ERRLOG for any query failures."');
+  lines.push('printf \'Passed: %d  Warned: %d  Failed: %d\\n\' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT"');
+  lines.push('echo "Per-query status: $LOGFILE"');
+  lines.push('echo "Errors (if any) : $ERRLOG"');
   lines.push('echo');
   lines.push('echo "*** REMINDER: Delete this SH file after generating your report! ***"');
   lines.push('echo "================================================================="');
   lines.push('');
-  lines.push(`printf '%s\\n' "$(date) — collection complete" >> "$OUTDIR/collection_log.txt"`);
+  lines.push(`printf '%s\\n' "$(date) — collection complete (passed=$PASS_COUNT warned=$WARN_COUNT failed=$FAIL_COUNT)" >> "$LOGFILE"`);
 
   return lines.join('\n');
 }
@@ -1740,6 +1838,7 @@ function generateReport() {
     buildSheet(wb, 'DR',          DOC_QUERIES, ['DR'],          'doc');
     buildSheet(wb, 'Advanced_v8', DOC_QUERIES, ['Advanced_v8'], 'doc');
     buildSheet(wb, 'Scripts',     DOC_QUERIES, ['Scripts'],     'doc');
+    buildSheet(wb, 'Schema',      DOC_QUERIES, ['Schema'],      'doc');
 
     // ── Healthcheck sheets ──────────────────────────────────────
     buildSheet(wb, 'HC_Database',  HEALTH_QUERIES, ['HC_Database'],  'hc');

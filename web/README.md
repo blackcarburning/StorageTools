@@ -83,8 +83,8 @@ Return to the web app. On the **Import Results** tab:
 ### Step 6 — Generate report (Report tab)
 Click **Download XLSX Report**. A coloured workbook is saved with:
 - **Index** sheet: import status and row counts for all queries
-- **13 documentation sheets**: Server, Admins, Nodes, Filespaces, Policy, Schedules, Storage,
-  Volumes, Occupancy, Replication, DR, Advanced\_v8, Scripts
+- **14 documentation sheets**: Server, Admins, Nodes, Filespaces, Policy, Schedules, Storage,
+  Volumes, Occupancy, Replication, DR, Advanced\_v8, Scripts, Schema
 - **6 healthcheck sheets**: HC\_Database, HC\_Storage, HC\_Schedules, HC\_Nodes,
   HC\_Activity, HC\_Advanced
 
@@ -127,20 +127,27 @@ All SELECT statements target **IBM Storage Protect v8.1.x** (DB2-based SQL engin
 Key v8 SQL practices used:
 - `DISTINCT` keyword instead of the deprecated `unique()` aggregate
 - `FLOAT(col)` for safe numeric division (avoids integer truncation)
+- `NULLIF(col, 0)` guards on all percentage divisions to prevent divide-by-zero errors
 - `DECIMAL(n,m)` casts for all computed GB/percentage values
 - `CURRENT_TIMESTAMP - N DAYS/HOURS` for timestamp arithmetic
 - `SUBSTR(CHAR(timestamp), 1, 19)` for safe datetime formatting
 - `INNER JOIN` syntax for multi-table queries
+- `UPPER(column)` on status comparisons for case-insensitive matching
 
 Queries marked **[v8 only]** target tables introduced in SP v8:
 - `CONTAINERS` — directory/cloud container pool objects
 - `REPLICATIONRULES` — v8 replication rule definitions
-- `STGRULES` — storage rules (v8.1.8+)
+- `STGRULES` — storage rules (v8.1.8+); queried with `TYPE` column per IBM docs
 - `RETENTIONSETS` — retention set definitions (v8.1.4+)
 - v8-extended columns on `STGPOOLS` (cloud storage columns)
 
-These queries **silently fail** on older servers and their errors are captured to
-`collection_errors.log` without stopping the batch.
+Version-sensitive views (`STGRULES`, `CONTAINERS`, `RETENTIONSETS`, `SERVERS`) are queried
+with `SELECT *` where the full column list cannot be established across all 8.1.x fix packs.
+Schema discovery queries (`doc_40`, `doc_41`) use `SYSCAT.TABLES` / `SYSCAT.COLUMNS` so you
+can inspect the actual columns available on your specific server.
+
+These queries may **fail on older servers**; the error output is now displayed on the console
+in real time and also appended to `collection_errors.log` with query ID and timestamp context.
 
 ---
 
@@ -155,14 +162,14 @@ page, so report downloads work offline with no CDN access and no extra files.
 
 | File | Description |
 |------|-------------|
-| `StorageTools_Documentation_<SERVER>.cmd` | Windows batch — documentation collection (39 queries) |
-| `StorageTools_Healthcheck_<SERVER>.cmd`   | Windows batch — healthcheck collection (28 queries) |
-| `StorageTools_Documentation_<SERVER>.sh` | Unix/Linux shell — documentation collection (39 queries, same CSV filenames/output format as CMD) |
-| `StorageTools_Healthcheck_<SERVER>.sh`   | Unix/Linux shell — healthcheck collection (28 queries, same CSV filenames/output format as CMD) |
+| `StorageTools_Documentation_<SERVER>.cmd` | Windows batch — documentation collection (41 queries) |
+| `StorageTools_Healthcheck_<SERVER>.cmd`   | Windows batch — healthcheck collection (31 queries) |
+| `StorageTools_Documentation_<SERVER>.sh` | Unix/Linux shell — documentation collection (41 queries, same CSV filenames/output format as CMD) |
+| `StorageTools_Healthcheck_<SERVER>.sh`   | Unix/Linux shell — healthcheck collection (31 queries, same CSV filenames/output format as CMD) |
 | `StorageTools_Output\doc_01_status.csv`   | One CSV per documentation query |
 | `StorageTools_Output\hc_01_db_space.csv`  | One CSV per healthcheck query |
-| `StorageTools_Output\collection_log.txt`  | Collection start/end timestamps |
-| `StorageTools_Output\collection_errors.log` | Any query errors (non-fatal) |
+| `StorageTools_Output\collection_log.txt`  | Per-query [OK]/[WARN]/[FAILED] status with timestamps |
+| `StorageTools_Output\collection_errors.log` | Query stderr output with query ID/title/timestamp context |
 | `StorageTools_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Final coloured XLSX report |
 
 ---
@@ -183,5 +190,8 @@ This web helper is an independent addition and does not modify or replace the Pe
 | `./script.sh: not found` or permission denied | Verify Unix client path, then run `chmod +x script.sh` and execute from a POSIX shell |
 | All output files empty | Check `collection_errors.log`; verify admin credentials and server connectivity |
 | XLSX download button does nothing | Confirm your browser allows downloads from local files and review the browser console for any client-side errors |
-| v8-only queries all fail | Expected on SP v7 and earlier; core queries still succeed |
+| v8-only queries fail | Expected on SP v7 and earlier; the error text is now echoed to the console in real time and appended with context to `collection_errors.log`. Core queries still succeed. |
 | Password with `%` breaks CMD | Double the `%` character in the `SET "ADMPA=..."` line of the CMD file |
+| Query shows `[WARN]` status | The dsmadmc return code was 0 (no hard error) but text was written to stderr — review `collection_errors.log` for the ANS message details |
+| Query shows `[FAILED]` status | The dsmadmc return code was non-zero; the stderr output appears on the console immediately and in `collection_errors.log` with the query ID and timestamp |
+| Schema queries (doc\_40, doc\_41) return no rows | `SYSCAT.TABLES`/`SYSCAT.COLUMNS` may require additional DB2 privileges; ask your DBA to `GRANT SELECT ON SYSCAT.TABLES TO <admin>` |
