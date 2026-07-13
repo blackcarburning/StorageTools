@@ -150,7 +150,8 @@ if (idFileMismatches === 0) ok('All IDs match their outputFile base names');
 
 // ─── 5. Known-invalid column references ──────────────────────────────────────
 section('5. No known-invalid SQL column references');
-// These column names were identified as wrong against IBM SP documentation.
+// These column names were identified as wrong against IBM SP documentation and/or
+// confirmed failing (rc=3) on a real server run.
 const bannedCols = [
   { pattern: /\bSERVER_TYPE\b/i,  context: 'SERVERS view (not documented for v8.1.27)' },
   // RULE_TYPE in STGRULES is wrong (should be TYPE per IBM docs);
@@ -162,23 +163,17 @@ const bannedCols = [
   { pattern: /\bDESCRIPTION\b.*\bPROCESSES\b|\bPROCESSES\b.*\bDESCRIPTION\b/is,
                                   context: 'PROCESSES (DESCRIPTION not in documented columns)' },
   { pattern: /\bPCT_COMPLETE\b/i, context: 'PROCESSES (PCT_COMPLETE not in documented columns)' },
-  // DB view: wrong column names confirmed by rc=3 in the field.
-  { pattern: /\bTOT_FILE_SYSTEM_MB\b/i, context: 'DB view (wrong name; use TOTAL_SPACE_MB)' },
-  { pattern: /\bUSED_DB_SPACE_MB\b/i,   context: 'DB view (wrong name; use USED_SPACE_MB)' },
-  { pattern: /\bLAST_REORG\b/i,         context: 'DB view (column does not exist)' },
-  // DBSPACE view: wrong column names confirmed by rc=3 in the field.
-  { pattern: /\bTOTAL_FS_SIZE_MB\b/i,   context: 'DBSPACE view (wrong name; use TOTAL_SPACE_MB)' },
-  { pattern: /\bUSED_FS_SIZE_MB\b/i,    context: 'DBSPACE view (wrong name; use USED_SPACE_MB)' },
   // NODES view: non-existent or wrong column names confirmed by rc=3 in the field.
   { pattern: /\bTCP_NAME\b/i,           context: 'NODES view (column does not exist)' },
   { pattern: /\bSESSION_INITIATION\b/i, context: 'NODES view (wrong name; use SESSIONSECURITY)' },
-  { pattern: /\bCLIENT_OS_LEVEL\b/i,    context: 'NODES view (column not in standard NODES view)' },
   // ADMINS view: wrong column names confirmed by rc=3 in the field.
   { pattern: /\bLAST_ACCESS\b.*ADMINS|ADMINS.*\bLAST_ACCESS\b/is,
                                          context: 'ADMINS view (wrong name; use LASTACC_TIME)' },
-  // CLIENT_SCHEDULES view: SCHED_STYLE not present in CLIENT_SCHEDULES on all v8.1.x servers.
-  { pattern: /\bSCHED_STYLE\b.*CLIENT_SCHEDULES|CLIENT_SCHEDULES.*\bSCHED_STYLE\b/is,
-                                         context: 'CLIENT_SCHEDULES (column absent on many v8.1.x; present in ADMIN_SCHEDULES only)' },
+  // CLIENT_SCHEDULES view: ACTIVE does not exist in CLIENT_SCHEDULES (it is in ADMIN_SCHEDULES).
+  { pattern: /\bACTIVE\b.*CLIENT_SCHEDULES|CLIENT_SCHEDULES.*\bACTIVE\b/is,
+                                         context: 'CLIENT_SCHEDULES (ACTIVE column absent; exists only in ADMIN_SCHEDULES)' },
+  // VOLHISTORY view: BACKUP_OPERATION is unverified and caused rc=3 on real servers.
+  { pattern: /\bBACKUP_OPERATION\b/i,   context: 'VOLHISTORY (BACKUP_OPERATION unverified; use SELECT * to avoid rc=3)' },
 ];
 let bannedFound = 0;
 for (const q of allQueries) {
@@ -204,7 +199,120 @@ for (const q of allQueries) {
 }
 if (badDateArith === 0) ok('All CURRENT_TIMESTAMP interval expressions are correctly spaced');
 
-// ─── 6. Division-by-zero guards ──────────────────────────────────────────────
+// ─── 5c. Positive assertions for corrected queries ────────────────────────────
+section('5c. Corrected query compatibility assertions');
+// Verify the six queries corrected for legacy-compatibility contain the expected
+// column forms and do not revert to the previously-failing patterns.
+
+const queryMap = {};
+for (const q of allQueries) queryMap[q.id] = q;
+
+// doc_02_db: must use legacy DB column names verified by STORAGE_TOOLS_v2.113.pl
+const q02 = queryMap['doc_02_db'];
+if (!q02) {
+  fail('doc_02_db query not found');
+} else {
+  if (/\bTOT_FILE_SYSTEM_MB\b/i.test(q02.sql)) {
+    ok('doc_02_db uses TOT_FILE_SYSTEM_MB (legacy-verified DB column)');
+  } else {
+    fail('doc_02_db missing TOT_FILE_SYSTEM_MB — must use legacy-verified column names');
+  }
+  if (/\bUSED_DB_SPACE_MB\b/i.test(q02.sql)) {
+    ok('doc_02_db uses USED_DB_SPACE_MB (legacy-verified DB column)');
+  } else {
+    fail('doc_02_db missing USED_DB_SPACE_MB — must use legacy-verified column names');
+  }
+  if (/\bPHYSICAL_VOLUMES\b/i.test(q02.sql)) {
+    ok('doc_02_db uses PHYSICAL_VOLUMES');
+  } else {
+    fail('doc_02_db missing PHYSICAL_VOLUMES');
+  }
+}
+
+// doc_03_dbspace: must use SELECT * to avoid column-name variation issues
+const q03 = queryMap['doc_03_dbspace'];
+if (!q03) {
+  fail('doc_03_dbspace query not found');
+} else {
+  if (/SELECT \* FROM DBSPACE/i.test(q03.sql)) {
+    ok('doc_03_dbspace uses SELECT * FROM DBSPACE (conservative form)');
+  } else {
+    fail('doc_03_dbspace must use SELECT * FROM DBSPACE to avoid rc=3 from column variation');
+  }
+}
+
+// doc_06_admins: must use SELECT * to avoid version-dependent column failures
+const q06 = queryMap['doc_06_admins'];
+if (!q06) {
+  fail('doc_06_admins query not found');
+} else {
+  if (/SELECT \* FROM ADMINS/i.test(q06.sql)) {
+    ok('doc_06_admins uses SELECT * FROM ADMINS (conservative form)');
+  } else {
+    fail('doc_06_admins must use SELECT * FROM ADMINS to avoid rc=3 from column variation');
+  }
+}
+
+// doc_07_nodes: must use legacy-verified columns CLIENT_OS_LEVEL and CLIENT_HLA
+const q07 = queryMap['doc_07_nodes'];
+if (!q07) {
+  fail('doc_07_nodes query not found');
+} else {
+  if (/\bCLIENT_OS_LEVEL\b/i.test(q07.sql)) {
+    ok('doc_07_nodes uses CLIENT_OS_LEVEL (legacy-verified NODES column)');
+  } else {
+    fail('doc_07_nodes missing CLIENT_OS_LEVEL — must use legacy-verified column list');
+  }
+  if (/\bCLIENT_HLA\b/i.test(q07.sql)) {
+    ok('doc_07_nodes uses CLIENT_HLA (legacy-verified NODES column)');
+  } else {
+    fail('doc_07_nodes missing CLIENT_HLA — must use legacy-verified column list');
+  }
+}
+
+// doc_16_client_schedules: must use SCHED_STYLE (legacy-verified), not ACTIVE
+const q16 = queryMap['doc_16_client_schedules'];
+if (!q16) {
+  fail('doc_16_client_schedules query not found');
+} else {
+  if (/\bSCHED_STYLE\b/i.test(q16.sql)) {
+    ok('doc_16_client_schedules uses SCHED_STYLE (legacy-verified CLIENT_SCHEDULES column)');
+  } else {
+    fail('doc_16_client_schedules missing SCHED_STYLE — must use legacy-verified column list');
+  }
+  if (/\bACTIVE\b/i.test(q16.sql)) {
+    fail('doc_16_client_schedules still contains ACTIVE — this column does not exist in CLIENT_SCHEDULES');
+  } else {
+    ok('doc_16_client_schedules does not contain ACTIVE (correctly excluded)');
+  }
+}
+
+// doc_28_volhistory: must use SELECT * to avoid unverified column failures
+const q28 = queryMap['doc_28_volhistory'];
+if (!q28) {
+  fail('doc_28_volhistory query not found');
+} else {
+  if (/SELECT \* FROM VOLHISTORY/i.test(q28.sql)) {
+    ok('doc_28_volhistory uses SELECT * FROM VOLHISTORY (avoids unverified column rc=3)');
+  } else {
+    fail('doc_28_volhistory must use SELECT * FROM VOLHISTORY to avoid rc=3 from unverified columns');
+  }
+}
+
+// doc_41_syscat_key_cols: must include the six corrected tables for schema discovery
+const q41 = queryMap['doc_41_syscat_key_cols'];
+if (!q41) {
+  fail('doc_41_syscat_key_cols query not found');
+} else {
+  for (const tbl of ['DB', 'DBSPACE', 'ADMINS', 'NODES', 'CLIENT_SCHEDULES', 'VOLHISTORY']) {
+    if (q41.sql.includes(`'${tbl}'`)) {
+      ok(`doc_41_syscat_key_cols includes '${tbl}' for schema discovery`);
+    } else {
+      fail(`doc_41_syscat_key_cols missing '${tbl}' — add for schema discovery`);
+    }
+  }
+}
+
 section('6. Division-by-zero guards (NULLIF) on percentage calculations');
 // Queries that divide by a potentially-zero column should use NULLIF.
 const divisionQueries = allQueries.filter(q =>

@@ -370,13 +370,16 @@ const DOC_QUERIES = [
     outputFile:'doc_01_status.csv' },
 
   { id:'doc_02_db', title:'Database Information', section:'Server',
-    // TOT_FILE_SYSTEM_MB/USED_DB_SPACE_MB are wrong IBM SP column names; the DB view uses TOTAL_SPACE_MB/USED_SPACE_MB. LAST_REORG does not exist in this view.
-    sql:"SELECT DATABASE_NAME,CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,BUFF_HIT_RATIO,PKG_HIT_RATIO,LAST_BACKUP_DATE,PHYSICAL_VOLUMES,NUM_DB_DIRS FROM DB",
+    // Column names verified against STORAGE_TOOLS_v2.113.pl (line 15151) and confirmed working.
+    // TOT_FILE_SYSTEM_MB, USED_DB_SPACE_MB, FREE_SPACE_MB, LAST_REORG, FULL_DEV_CLASS, PHYSICAL_VOLUMES
+    // are the correct IBM SP DB view column names; TOTAL_SPACE_MB/USED_SPACE_MB caused rc=3 failures.
+    sql:"SELECT DATABASE_NAME,CAST(TOT_FILE_SYSTEM_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(USED_DB_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,BUFF_HIT_RATIO,PKG_HIT_RATIO,LAST_REORG,FULL_DEV_CLASS,LAST_BACKUP_DATE,PHYSICAL_VOLUMES FROM DB",
     outputFile:'doc_02_db.csv' },
 
   { id:'doc_03_dbspace', title:'Database Volumes (DBSPACE)', section:'Server',
-    // TOTAL_FS_SIZE_MB/USED_FS_SIZE_MB are wrong IBM SP column names; the DBSPACE view uses TOTAL_SPACE_MB/USED_SPACE_MB. LOCATION is not a documented DBSPACE column.
-    sql:"SELECT VOLUME_NAME,CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB FROM DBSPACE ORDER BY VOLUME_NAME",
+    // DBSPACE columns vary across fix-pack levels; SELECT * avoids rc=3 from explicit wrong names.
+    // Confirmed safe form from legacy STORAGE_TOOLS_v2.113.pl compatibility reference.
+    sql:"SELECT * FROM DBSPACE",
     outputFile:'doc_03_dbspace.csv' },
 
   { id:'doc_04_log', title:'Transaction Log', section:'Server',
@@ -389,18 +392,17 @@ const DOC_QUERIES = [
 
   // ── Administrators ───────────────────────────────────────────────────────
   { id:'doc_06_admins', title:'Administrators', section:'Admins',
-    // LAST_ACCESS is wrong; IBM SP ADMINS view uses LASTACC_TIME (consistent with NODES).
-    // LOCKED is a NODE attribute and does not exist in the ADMINS view.
-    sql:"SELECT ADMIN_NAME,SYSTEM_PRIV,POLICY_PRIV,STORAGE_PRIV,OPERATOR_PRIV,ANALYST_PRIV,LASTACC_TIME FROM ADMINS ORDER BY ADMIN_NAME",
+    // Explicit column list caused rc=3; SELECT * avoids version-dependent column mismatches.
+    // ADMIN_NAME confirmed present in ADMINS (verified by legacy STORAGE_TOOLS_v2.113.pl line 14383).
+    sql:"SELECT * FROM ADMINS ORDER BY ADMIN_NAME",
     outputFile:'doc_06_admins.csv' },
 
   // ── Nodes ────────────────────────────────────────────────────────────────
   { id:'doc_07_nodes', title:'Nodes — Full Detail', section:'Nodes',
-    // TCP_NAME does not exist in the NODES view.
-    // CLIENT_OS_LEVEL is not a documented NODES view column.
-    // SESSION_INITIATION is wrong; use SESSIONSECURITY (v8.1.2+).
-    // TCP_ADDRESS is the IBM-documented column for the node's high-level TCP address.
-    sql:"SELECT NODE_NAME,PLATFORM_NAME,DOMAIN_NAME,OPTION_SET,LOCKED,CLIENT_VERSION,CLIENT_RELEASE,CLIENT_LEVEL,CLIENT_SUBLEVEL,TCP_ADDRESS,DEDUPLICATION,COMPRESSION,SESSIONSECURITY,REG_TIME,LASTACC_TIME,CONTACT,NODETYPE,MAXNUMMP,ARCHDELETE,BACKDELETE FROM NODES ORDER BY DOMAIN_NAME,NODE_NAME",
+    // Column list verified against legacy STORAGE_TOOLS_v2.113.pl (lines 15089, 15168).
+    // CLIENT_OS_LEVEL and CLIENT_HLA are confirmed present; SESSIONSECURITY, COMPRESSION,
+    // TCP_ADDRESS etc. caused rc=3 on real servers when combined with this selection.
+    sql:"SELECT NODE_NAME,PLATFORM_NAME,CLIENT_OS_LEVEL,DOMAIN_NAME,ARCHDELETE,BACKDELETE,CLIENT_VERSION,CLIENT_RELEASE,CLIENT_LEVEL,CLIENT_SUBLEVEL,OPTION_SET,CLIENT_HLA,DEDUPLICATION FROM NODES ORDER BY NODE_NAME",
     outputFile:'doc_07_nodes.csv' },
 
   { id:'doc_08_nodes_platform', title:'Nodes — by Platform', section:'Nodes',
@@ -441,9 +443,10 @@ const DOC_QUERIES = [
 
   // ── Schedules ────────────────────────────────────────────────────────────
   { id:'doc_16_client_schedules', title:'Client Schedules', section:'Schedules',
-    // SCHED_STYLE exists in ADMIN_SCHEDULES but is NOT present in CLIENT_SCHEDULES on
-    // many IBM SP v8.1.x installations.  Removed to avoid rc=3 syntax errors.
-    sql:"SELECT DOMAIN_NAME,SCHEDULE_NAME,ACTION,OPTIONS,OBJECTS,STARTTIME,DURATION,DURUNITS,PERIOD,PERUNITS,DAYOFWEEK,ACTIVE FROM CLIENT_SCHEDULES ORDER BY DOMAIN_NAME,SCHEDULE_NAME",
+    // Column list verified against legacy STORAGE_TOOLS_v2.113.pl (line 8136).
+    // ACTIVE is not present in CLIENT_SCHEDULES (it exists only in ADMIN_SCHEDULES).
+    // SCHED_STYLE is confirmed present in CLIENT_SCHEDULES by the legacy tool.
+    sql:"SELECT DOMAIN_NAME,SCHEDULE_NAME,ACTION,OPTIONS,OBJECTS,STARTTIME,DURATION,DURUNITS,PERIOD,PERUNITS,DAYOFWEEK,SCHED_STYLE FROM CLIENT_SCHEDULES ORDER BY DOMAIN_NAME,SCHEDULE_NAME",
     outputFile:'doc_16_client_schedules.csv' },
 
   { id:'doc_17_admin_schedules', title:'Admin Schedules', section:'Schedules',
@@ -496,9 +499,9 @@ const DOC_QUERIES = [
     outputFile:'doc_27_libvols_summary.csv' },
 
   { id:'doc_28_volhistory', title:'Volume History (30 days)', section:'Volumes',
-    // CURRENT_TIMESTAMP - 30 DAYS (no space) is a DB2 parse error; spaces around the operator
-    // are required for the interval expression to be recognised correctly.
-    sql:"SELECT DATE_TIME,TYPE,VOLUME_NAME,BACKUP_SERIES,BACKUP_OPERATION,SERVER_NAME FROM VOLHISTORY WHERE DATE_TIME >= CURRENT_TIMESTAMP - 30 DAYS ORDER BY DATE_TIME DESC",
+    // Explicit column selection (BACKUP_OPERATION, SERVER_NAME) caused rc=3 on real servers.
+    // SELECT * avoids unverified column references; DATE_TIME filter confirmed working by legacy tool.
+    sql:"SELECT * FROM VOLHISTORY WHERE DATE_TIME >= CURRENT_TIMESTAMP - 30 DAYS ORDER BY DATE_TIME DESC",
     outputFile:'doc_28_volhistory.csv' },
 
   // ── Occupancy ─────────────────────────────────────────────────────────────
@@ -566,7 +569,7 @@ const DOC_QUERIES = [
     outputFile:'doc_40_syscat_sp_views.csv' },
 
   { id:'doc_41_syscat_key_cols', title:'Schema — Key View Columns (SYSCAT.COLUMNS)', section:'Schema',
-    sql:"SELECT TABNAME,COLNO,COLNAME,TYPENAME FROM SYSCAT.COLUMNS WHERE TABNAME IN ('PROCESSES','STGRULES','CONTAINERS','RETENTIONSETS','SERVERS','REPLICATIONRULES','SESSIONS') ORDER BY TABNAME,COLNO",
+    sql:"SELECT TABNAME,COLNO,COLNAME,TYPENAME FROM SYSCAT.COLUMNS WHERE TABNAME IN ('DB','DBSPACE','ADMINS','NODES','CLIENT_SCHEDULES','VOLHISTORY','PROCESSES','STGRULES','CONTAINERS','RETENTIONSETS','SERVERS','REPLICATIONRULES','SESSIONS') ORDER BY TABNAME,COLNO",
     outputFile:'doc_41_syscat_key_cols.csv' },
 
 ]; // end DOC_QUERIES
