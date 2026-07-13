@@ -240,10 +240,11 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
   <div class="card">
     <h2>📥 Import Output Files</h2>
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-      <div class="dz-icon">📂</div>
-      <p><strong>Click to select files</strong> or drag-and-drop</p>
-      <p>Select all <code>.csv</code> files from the configured script output folder.</p>
-      <input type="file" id="fileInput" multiple accept=".csv,.txt" style="display:none" onchange="handleFiles(this.files)">
+      <div class="dz-icon">📦</div>
+      <p><strong>Click to select the collection archive</strong> or drag-and-drop</p>
+      <p>Select the <code>.tar</code> archive produced by the generated script.</p>
+      <p style="font-size:11px;color:#9ca3af">Fallback: individual <code>.csv</code> output files are also accepted.</p>
+      <input type="file" id="fileInput" multiple accept=".tar,.csv,.txt" style="display:none" onchange="handleFiles(this.files)">
     </div>
     <div id="importSummary" class="alert alert-info" style="margin-top:12px">
       No files imported yet. Run the generated scripts then select the output files here.
@@ -710,7 +711,8 @@ const STATE = {
     outputDirWindows: DEFAULT_OUTPUT_DIR,
     outputDirUnix   : DEFAULT_OUTPUT_DIR
   },
-  imported: {}   // filename → { name, headers[], rows[][] }
+  imported: {},  // filename → { name, headers[], rows[][] }
+  archive: null  // { filename, manifest, collectionLog, collectionErrors, warnings[] }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -738,6 +740,9 @@ function generateCmdContent() {
   const label   = 'Complete';
   const total   = queries.length;
   const now     = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const serverSafe     = (cfg.serverName   || 'SERVER'  ).replace(/[^A-Za-z0-9_-]/g, '_');
+  const manifestCustomer = (cfg.customerName || '(not set)').replace(/[^A-Za-z0-9 ._,-]/g, '_');
+  const manifestServer   = (cfg.serverName   || '(not set)').replace(/[^A-Za-z0-9 ._,-]/g, '_');
 
   const lines = [];
 
@@ -774,6 +779,14 @@ function generateCmdContent() {
   lines.push('IF NOT "%OPTFILE%"=="" SET OPTARG=-optfile="%OPTFILE%"');
   lines.push('');
   lines.push('IF NOT EXIST "%OUTDIR%" MKDIR "%OUTDIR%"');
+  lines.push('');
+  lines.push('REM Verify tar is available');
+  lines.push('where tar >NUL 2>&1');
+  lines.push('IF %ERRORLEVEL% NEQ 0 (');
+  lines.push('  echo [FATAL] tar is not available -- install bsdtar/tar before running this script 1>&2');
+  lines.push('  echo %DATE% %TIME% [FATAL] tar not found -- collection aborted >> "%OUTDIR%\\collection_log.txt"');
+  lines.push('  EXIT /B 1');
+  lines.push(')');
   lines.push('');
   lines.push('SET PASS_COUNT=0');
   lines.push('SET WARN_COUNT=0');
@@ -877,6 +890,62 @@ function generateCmdContent() {
   lines.push('');
   lines.push('echo %DATE% %TIME% -- collection complete (passed=%PASS_COUNT% warned=%WARN_COUNT% failed=%FAIL_COUNT%) >> "%OUTDIR%\collection_log.txt"');
   lines.push('');
+  lines.push('REM ── Archive packaging ──────────────────────────────────────────────────');
+  lines.push(`SET "ARCHIVE_SERVER=${serverSafe}"`);
+  lines.push('SET "_DT="');
+  lines.push('FOR /F "usebackq tokens=2 delims==" %%I IN (`wmic os get localdatetime /value`) DO IF NOT "%%I"=="" SET "_DT=%%I"');
+  lines.push('IF DEFINED _DT (');
+  lines.push('  SET "ARCHIVE_TS=%_DT:~0,8%_%_DT:~8,6%"');
+  lines.push('  SET "GEN_UTC=%_DT:~0,4%-%_DT:~4,2%-%_DT:~6,2%T%_DT:~8,2%:%_DT:~10,2%:%_DT:~12,2%Z"');
+  lines.push(') ELSE (');
+  lines.push('  SET "ARCHIVE_TS=%DATE:~10,4%%DATE:~4,2%%DATE:~7,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%"');
+  lines.push('  SET "ARCHIVE_TS=%ARCHIVE_TS: =0%"');
+  lines.push('  SET "GEN_UTC=(unavailable)"');
+  lines.push(')');
+  lines.push('PUSHD "%OUTDIR%\\.."');
+  lines.push('SET "OUTPARENT=%CD%"');
+  lines.push('POPD');
+  lines.push('SET "ARCHIVE_BASE=StorageTools_Complete_%ARCHIVE_SERVER%_%ARCHIVE_TS%.tar"');
+  lines.push('SET "ARCHIVE_FILE=%OUTPARENT%\\%ARCHIVE_BASE%"');
+  lines.push('SET "ARCHIVE_TMP=%ARCHIVE_FILE%.tmp"');
+  lines.push('');
+  lines.push('REM Write manifest');
+  lines.push('(');
+  lines.push('  echo format=StorageTools-Collection');
+  lines.push('  echo format_version=1');
+  lines.push(`  echo customer=${manifestCustomer}`);
+  lines.push(`  echo server_label=${manifestServer}`);
+  lines.push(`  echo query_count=${total}`);
+  lines.push(') > "%OUTDIR%\\manifest.txt"');
+  lines.push('echo generated_utc=%GEN_UTC% >> "%OUTDIR%\\manifest.txt"');
+  lines.push('echo passed=%PASS_COUNT% >> "%OUTDIR%\\manifest.txt"');
+  lines.push('echo warned=%WARN_COUNT% >> "%OUTDIR%\\manifest.txt"');
+  lines.push('echo failed=%FAIL_COUNT% >> "%OUTDIR%\\manifest.txt"');
+  lines.push('');
+  lines.push('echo Creating collection archive: %ARCHIVE_BASE%');
+  lines.push('tar -cf "%ARCHIVE_TMP%" -C "%OUTDIR%" .');
+  lines.push('IF %ERRORLEVEL% NEQ 0 (');
+  lines.push('  IF EXIST "%ARCHIVE_TMP%" DEL /Q "%ARCHIVE_TMP%"');
+  lines.push('  echo [WARN] Archive creation failed; individual files retained in: %OUTDIR% 1>&2');
+  lines.push('  echo %DATE% %TIME% [WARN] archive creation failed -- files retained in %OUTDIR% >> "%OUTDIR%\\collection_log.txt"');
+  lines.push('  GOTO :SKIP_CLEANUP');
+  lines.push(')');
+  lines.push('FOR %%S IN ("%ARCHIVE_TMP%") DO IF %%~zS GTR 0 (');
+  lines.push('  MOVE /Y "%ARCHIVE_TMP%" "%ARCHIVE_FILE%" >NUL');
+  lines.push('  echo Archive created: %ARCHIVE_FILE%');
+  lines.push('  echo %DATE% %TIME% archive created: %ARCHIVE_FILE% >> "%OUTDIR%\\collection_log.txt"');
+  lines.push('  RD /S /Q "%OUTDIR%"');
+  lines.push('  echo =================================================================');
+  lines.push('  echo Collection archive: %ARCHIVE_FILE%');
+  lines.push('  echo Import this single archive into StorageTools to generate your XLSX report.');
+  lines.push('  echo =================================================================');
+  lines.push('  GOTO :SKIP_CLEANUP');
+  lines.push(')');
+  lines.push('IF EXIST "%ARCHIVE_TMP%" DEL /Q "%ARCHIVE_TMP%"');
+  lines.push('echo [WARN] Archive created but is empty; individual files retained in: %OUTDIR% 1>&2');
+  lines.push('echo %DATE% %TIME% [WARN] archive empty -- files retained in %OUTDIR% >> "%OUTDIR%\\collection_log.txt"');
+  lines.push(':SKIP_CLEANUP');
+  lines.push('');
   lines.push('endlocal');
   lines.push('GOTO :EOF');
   lines.push('');
@@ -950,6 +1019,7 @@ function generateShContent() {
   const queries = ALL_QUERIES;
   const total   = queries.length;
   const now     = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const serverSafe = (cfg.serverName || 'SERVER').replace(/[^A-Za-z0-9_-]/g, '_');
 
   const lines = [];
 
@@ -984,14 +1054,22 @@ function generateShContent() {
   lines.push('WARN_COUNT=0');
   lines.push('QTMP=""');
   lines.push('PREFLIGHT_TMP=""');
+  lines.push('ARCHIVE_TMP=""');
   lines.push('');
   lines.push('mkdir -p "$OUTDIR"');
   lines.push('');
   lines.push(': > "$LOGFILE"');
   lines.push(': > "$ERRLOG"');
   lines.push('');
-  lines.push('cleanup() { [ -n "$QTMP" ] && rm -f "$QTMP"; [ -n "$PREFLIGHT_TMP" ] && rm -f "$PREFLIGHT_TMP"; }');
+  lines.push('cleanup() { [ -n "$QTMP" ] && rm -f "$QTMP"; [ -n "$PREFLIGHT_TMP" ] && rm -f "$PREFLIGHT_TMP"; [ -n "$ARCHIVE_TMP" ] && rm -f "$ARCHIVE_TMP"; }');
   lines.push('trap cleanup EXIT INT TERM');
+  lines.push('');
+  lines.push('# Verify tar is available before starting collection');
+  lines.push('if ! command -v tar >/dev/null 2>&1; then');
+  lines.push("  printf '%s\\n' '[FATAL] tar is not available -- install tar before running this script' >&2");
+  lines.push("  printf '%s\\n' \"$(date) [FATAL] tar not found -- collection aborted\" >> \"$LOGFILE\"");
+  lines.push('  exit 1');
+  lines.push('fi');
   lines.push('');
   lines.push('echo "================================================================="');
   lines.push('echo "IBM Storage Protect — Complete Collection"');
@@ -1127,6 +1205,48 @@ function generateShContent() {
   lines.push('echo "================================================================="');
   lines.push('');
   lines.push("printf '%s\n' \"$(date) — collection complete (passed=$PASS_COUNT warned=$WARN_COUNT failed=$FAIL_COUNT)\" >> \"$LOGFILE\"");
+  lines.push('');
+  lines.push('# ── Archive packaging ───────────────────────────────────────────────────────');
+  lines.push(`ARCHIVE_SERVER=${shellQuote(serverSafe)}`);
+  lines.push("ARCHIVE_TS=$(date -u '+%Y%m%d_%H%M%S' 2>/dev/null || date '+%Y%m%d_%H%M%S')");
+  lines.push('OUTPARENT=$(cd "$OUTDIR/.." && pwd)');
+  lines.push('ARCHIVE_BASE="StorageTools_Complete_${ARCHIVE_SERVER}_${ARCHIVE_TS}.tar"');
+  lines.push('ARCHIVE_FILE="$OUTPARENT/$ARCHIVE_BASE"');
+  lines.push('ARCHIVE_TMP="${ARCHIVE_FILE}.tmp"');
+  lines.push('MANIFEST="$OUTDIR/manifest.txt"');
+  lines.push('');
+  lines.push("printf 'format=StorageTools-Collection\\n' > \"$MANIFEST\"");
+  lines.push("printf 'format_version=1\\n' >> \"$MANIFEST\"");
+  lines.push("printf 'generated_utc=%s\\n' \"$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')\" >> \"$MANIFEST\"");
+  lines.push("printf 'customer=%s\\n' \"$CUSTOMER\" >> \"$MANIFEST\"");
+  lines.push("printf 'server_label=%s\\n' \"$SERVER\" >> \"$MANIFEST\"");
+  lines.push(`printf 'query_count=${total}\\n' >> "$MANIFEST"`);
+  lines.push("printf 'passed=%s\\n' \"$PASS_COUNT\" >> \"$MANIFEST\"");
+  lines.push("printf 'warned=%s\\n' \"$WARN_COUNT\" >> \"$MANIFEST\"");
+  lines.push("printf 'failed=%s\\n' \"$FAIL_COUNT\" >> \"$MANIFEST\"");
+  lines.push('');
+  lines.push('echo "Creating collection archive: $ARCHIVE_BASE"');
+  lines.push('if (cd "$OUTDIR" && tar -cf "$ARCHIVE_TMP" .); then');
+  lines.push('  if [ -s "$ARCHIVE_TMP" ]; then');
+  lines.push('    mv "$ARCHIVE_TMP" "$ARCHIVE_FILE"');
+  lines.push('    ARCHIVE_TMP=""');
+  lines.push("    printf '%s\\n' \"$(date) archive created: $ARCHIVE_FILE\" >> \"$LOGFILE\"");
+  lines.push('    echo "Archive created: $ARCHIVE_FILE"');
+  lines.push('    rm -rf "$OUTDIR"');
+  lines.push('    echo "================================================================="');
+  lines.push('    echo "Collection archive: $ARCHIVE_FILE"');
+  lines.push('    echo "Import this single archive into StorageTools to generate your XLSX report."');
+  lines.push('    echo "================================================================="');
+  lines.push('  else');
+  lines.push('    rm -f "$ARCHIVE_TMP"; ARCHIVE_TMP=""');
+  lines.push("    printf '%s\\n' \"$(date) [WARN] archive empty -- files retained in $OUTDIR\" >> \"$LOGFILE\"");
+  lines.push('    echo "[WARN] Archive created but is empty; individual files retained in: $OUTDIR" >&2');
+  lines.push('  fi');
+  lines.push('else');
+  lines.push('  rm -f "$ARCHIVE_TMP"; ARCHIVE_TMP=""');
+  lines.push("  printf '%s\\n' \"$(date) [WARN] archive creation failed -- files retained in $OUTDIR\" >> \"$LOGFILE\"");
+  lines.push('  echo "[WARN] Archive creation failed; individual files retained in: $OUTDIR" >&2');
+  lines.push('fi');
 
   return lines.join('\n');
 }
@@ -1209,21 +1329,210 @@ function parseDsmOutput(text) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FILE IMPORT
+// TAR ARCHIVE READER  — self-contained POSIX ustar/GNU TAR parser
+// Reads an uncompressed .tar buffer; returns files by base filename.
 // ═══════════════════════════════════════════════════════════════════════════
+
+// TAR archive limit constants:
+// - 10,000 entries: well above any realistic collection (76 queries + 3 logs = ~80 files)
+//   but avoids runaway memory use if a user accidentally loads a large archive.
+// - 50 MB per file: generous for CSV data; guards against a single bloated entry.
+// - 300 MB total: practical browser memory budget; a typical collection is < 5 MB.
+const TAR_MAX_ENTRIES    = 10000;
+const TAR_MAX_FILE_BYTES = 50 * 1024 * 1024;   // 50 MB per file
+const TAR_MAX_TOTAL_BYTES = 300 * 1024 * 1024; // 300 MB total
+
+function parseTarArchive(buffer) {
+  const bytes  = new Uint8Array(buffer);
+  const files  = new Map(); // safe basename → Uint8Array
+  const errors = [];
+  const warnings = [];
+
+  /** Read null-terminated string from byte range; replace invalid UTF-8 with U+FFFD */
+  function getString(start, len) {
+    let end = start;
+    while (end < start + len && bytes[end] !== 0) end++;
+    try { return new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(start, end)); }
+    catch (_) { return new TextDecoder('latin1').decode(bytes.subarray(start, end)); }
+  }
+
+  /** Parse octal string field; return -1 on invalid octal. */
+  function parseOctal(start, len) {
+    const s = getString(start, len).trim().replace(/^0+/, '') || '0';
+    if (!/^[0-7]+$/.test(s)) return -1;
+    return parseInt(s, 8);
+  }
+
+  /** Return true when path is safe (no traversal, not absolute, no drive letters).
+   *  Caller should pass the raw fullName (before any directory-stripping) so that
+   *  traversal sequences like ../ are not stripped away before this check runs.
+   *  backslash paths are also rejected even though the caller normalises them to /
+   *  first, as a defence-in-depth measure for any direct callers. */
+  function isSafePath(p) {
+    if (!p || p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.includes('\\')) return false;
+    return !p.split('/').some(part => part === '..');
+  }
+
+  let offset = 0;
+  let entryCount = 0;
+  let totalBytes = 0;
+  let zeroBlocks = 0;
+
+  while (offset + 512 <= bytes.length) {
+    const hdr = bytes.subarray(offset, offset + 512);
+
+    // Check for zero block (end-of-archive marker)
+    let allZero = true;
+    for (let i = 0; i < 512; i++) { if (hdr[i] !== 0) { allZero = false; break; } }
+    if (allZero) {
+      if (++zeroBlocks >= 2) break;
+      offset += 512;
+      continue;
+    }
+    zeroBlocks = 0;
+
+    if (entryCount >= TAR_MAX_ENTRIES) {
+      warnings.push(`Entry limit (${TAR_MAX_ENTRIES}) reached; remaining entries skipped.`);
+      break;
+    }
+
+    const typeflag = String.fromCharCode(hdr[156]);
+    const name     = getString(offset + 0, 100);
+    const magic    = getString(offset + 257, 6);
+    const prefix   = magic.startsWith('ustar') ? getString(offset + 345, 155) : '';
+    const fullName = (prefix ? prefix.replace(/\/+$/, '') + '/' + name : name).replace(/\\/g, '/');
+    const stripped = fullName.replace(/^\.\//, '').replace(/^[^/]+\//, '').replace(/^\.\//, '');
+
+    const size = parseOctal(offset + 124, 12);
+    if (size < 0) {
+      errors.push(`Invalid octal size at offset ${offset}; archive may be corrupted.`);
+      break;
+    }
+
+    const dataPad = size > 0 ? Math.ceil(size / 512) * 512 : 0;
+    offset += 512;
+    entryCount++;
+
+    if (offset + dataPad > bytes.length) {
+      errors.push(`Truncated archive: "${stripped}" needs ${size} bytes but only ${bytes.length - offset} remain.`);
+      break;
+    }
+
+    if (typeflag === '0' || typeflag === '\0' || typeflag === '') {
+      // Regular file — validate the raw fullName before stripping any directory prefix
+      if (!isSafePath(fullName)) {
+        warnings.push(`Skipped unsafe path: "${fullName}"`);
+      } else if (size > TAR_MAX_FILE_BYTES) {
+        warnings.push(`Skipped large file "${stripped}" (${size} bytes > ${TAR_MAX_FILE_BYTES} limit).`);
+      } else {
+        totalBytes += size;
+        if (totalBytes > TAR_MAX_TOTAL_BYTES) {
+          warnings.push(`Total size limit exceeded; remaining entries skipped.`);
+          break;
+        }
+        const baseName = stripped.split('/').pop();
+        if (!baseName) { offset += dataPad; continue; }
+        if (files.has(baseName)) {
+          warnings.push(`Duplicate filename "${baseName}"; first occurrence used.`);
+        } else {
+          files.set(baseName, bytes.slice(offset, offset + size));
+        }
+      }
+    }
+    // typeflag '5' = directory; others silently ignored
+
+    offset += dataPad;
+  }
+
+  return { files, errors, warnings };
+}
+
+/** Parse key=value manifest text; return plain object. */
+function parseManifest(text) {
+  const m = {};
+  if (!text) return m;
+  for (const line of text.split(/\r?\n/)) {
+    const eq = line.indexOf('=');
+    if (eq > 0) m[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+  }
+  return m;
+}
+
+function handleTarFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const result = parseTarArchive(e.target.result);
+
+    if (result.errors.length > 0) {
+      const el = document.getElementById('importSummary');
+      el.className = 'alert alert-danger';
+      el.innerHTML = `<strong>Archive import failed:</strong> ${result.errors.map(s => s.replace(/</g,'&lt;')).join('; ')}`;
+      return;
+    }
+
+    const decode = data => {
+      if (!data) return null;
+      try { return new TextDecoder('utf-8', { fatal: false }).decode(data); }
+      catch (_) { return null; }
+    };
+
+    // Atomically build new imported state
+    const newImported = {};
+    for (const q of ALL_QUERIES) {
+      const data = result.files.get(q.outputFile);
+      if (data) {
+        const parsed = parseDsmOutput(decode(data));
+        newImported[q.outputFile] = { name: q.outputFile, headers: parsed.headers, rows: parsed.rows };
+      }
+    }
+
+    const logRaw  = result.files.get('collection_log.txt');
+    const errRaw  = result.files.get('collection_errors.log');
+    const maniRaw = result.files.get('manifest.txt');
+
+    const archiveInfo = {
+      filename       : file.name,
+      manifest       : maniRaw ? parseManifest(decode(maniRaw)) : null,
+      collectionLog  : logRaw  ? decode(logRaw)  : null,
+      collectionErrors: errRaw ? decode(errRaw) : null,
+      warnings       : result.warnings.slice()
+    };
+
+    if (!logRaw)  archiveInfo.warnings.push('collection_log.txt not found in archive.');
+    if (!errRaw)  archiveInfo.warnings.push('collection_errors.log not found in archive (expected even when empty).');
+    if (!maniRaw) archiveInfo.warnings.push('manifest.txt not found in archive.');
+
+    // Atomic replacement
+    STATE.imported = newImported;
+    STATE.archive  = archiveInfo;
+
+    const csvCount = Object.keys(newImported).length;
+    refreshImportUI();
+    showStatus(`Archive imported: ${csvCount} CSV files from ${file.name}.`);
+  };
+  reader.readAsArrayBuffer(file);
+}
 
 function handleFiles(fileList) {
   const files = Array.from(fileList);
-  let loaded = 0;
 
+  // Primary path: .tar archive
+  const tarFile = files.find(f => f.name.toLowerCase().endsWith('.tar'));
+  if (tarFile) {
+    handleTarFile(tarFile);
+    return;
+  }
+
+  // Fallback: individual CSV / text files (legacy)
+  let loaded = 0;
   files.forEach(file => {
     const reader = new FileReader();
     reader.onload = e => {
       const parsed = parseDsmOutput(e.target.result);
       STATE.imported[file.name] = {
-        name: file.name,
+        name   : file.name,
         headers: parsed.headers,
-        rows: parsed.rows
+        rows   : parsed.rows
       };
       loaded++;
       if (loaded === files.length) {
@@ -1237,6 +1546,7 @@ function handleFiles(fileList) {
 
 function clearImport() {
   STATE.imported = {};
+  STATE.archive  = null;
   refreshImportUI();
   showStatus('All imports cleared.');
 }
@@ -1289,16 +1599,32 @@ function updateImportSummary() {
   const imp     = ALL_QUERIES.filter(q => STATE.imported[q.outputFile]).length;
   const noRows  = ALL_QUERIES.filter(q => STATE.imported[q.outputFile] && STATE.imported[q.outputFile].rows.length === 0).length;
   const missing = total - imp;
-  document.getElementById('importSummary').innerHTML =
-    `<strong>${imp}</strong> of <strong>${total}</strong> files imported · ` +
+
+  let html = `<strong>${imp}</strong> of <strong>${total}</strong> files imported · ` +
     `<strong>${noRows}</strong> empty/no-rows · <strong>${missing}</strong> not yet imported.`;
+
+  if (STATE.archive && STATE.archive.filename) {
+    const m = STATE.archive.manifest || {};
+    html += `<br><small style="color:#374151">Archive: <code>${STATE.archive.filename}</code>`;
+    if (m.passed !== undefined) html += ` · Collection: ${m.passed} passed, ${m.warned} warned, ${m.failed} failed`;
+    if (m.customer) html += ` · Customer: ${m.customer}`;
+    if (m.server_label) html += ` · Server: ${m.server_label}`;
+    if (STATE.archive.warnings && STATE.archive.warnings.length > 0) {
+      html += ` · <span style="color:#b45309">⚠ ${STATE.archive.warnings.length} packaging warning(s)</span>`;
+    }
+    html += '</small>';
+  }
+
+  const el = document.getElementById('importSummary');
+  el.className = 'alert alert-info';
+  el.innerHTML = html;
 }
 
 function updateReportStats() {
   const imported = ALL_QUERIES.filter(q => STATE.imported[q.outputFile]).length;
   document.getElementById('reportStats').innerHTML = `
     <div class="stat-box"><div class="stat-num">${ALL_QUERIES.length}</div><div class="stat-lbl">Total queries</div></div>
-    <div class="stat-box"><div class="stat-num">${WORKBOOK_SHEETS.length + 1}</div><div class="stat-lbl">Workbook sheets incl. Index</div></div>
+    <div class="stat-box"><div class="stat-num">${WORKBOOK_SHEETS.length + 3}</div><div class="stat-lbl">Workbook sheets (data + Index + Collection_Log + Collection_Errors)</div></div>
     <div class="stat-box"><div class="stat-num">${imported}</div><div class="stat-lbl">Files imported</div></div>
     <div class="stat-box"><div class="stat-num">${ALL_QUERIES.length - imported}</div><div class="stat-lbl">Not imported</div></div>
   `;
@@ -1854,6 +2180,48 @@ function buildSheet(wb, sheetName) {
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
 }
 
+function buildCollectionLogSheet(wb) {
+  const ws = {};
+  let r = 0;
+  const logText = STATE.archive && STATE.archive.collectionLog;
+
+  ws_set(ws, r++, 0, 'Collection Log', STYLES.idxSection);
+
+  if (!logText) {
+    ws_set(ws, r++, 0, '(No collection log imported — run from archive for full diagnostics)', STYLES.notImp);
+  } else {
+    logText.split(/\r?\n/).forEach(line => {
+      if (line) ws_set(ws, r++, 0, line, STYLES.dataEven);
+    });
+  }
+
+  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:Math.max(0,r-1),c:0} });
+  ws['!cols'] = [{ wch: 120 }];
+  XLSX.utils.book_append_sheet(wb, ws, 'Collection_Log');
+}
+
+function buildCollectionErrorsSheet(wb) {
+  const ws = {};
+  let r = 0;
+  const errText = STATE.archive ? STATE.archive.collectionErrors : undefined;
+
+  ws_set(ws, r++, 0, 'Collection Errors', STYLES.idxSection);
+
+  if (errText === null || errText === undefined) {
+    ws_set(ws, r++, 0, '(No collection errors log imported — run from archive for full diagnostics)', STYLES.notImp);
+  } else if (!errText.trim()) {
+    ws_set(ws, r++, 0, 'No errors recorded', STYLES.noData);
+  } else {
+    errText.split(/\r?\n/).forEach(line => {
+      if (line) ws_set(ws, r++, 0, line, STYLES.dataEven);
+    });
+  }
+
+  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:Math.max(0,r-1),c:0} });
+  ws['!cols'] = [{ wch: 120 }];
+  XLSX.utils.book_append_sheet(wb, ws, 'Collection_Errors');
+}
+
 function buildIndexSheet(wb) {
   const ws = {};
   let r = 0;
@@ -1864,6 +2232,31 @@ function buildIndexSheet(wb) {
   ws_set(ws, r++, 2, `Server: ${cfg.serverName || '—'}`, STYLES.dataEven);
   ws_set(ws, r++, 0, `Generated: ${new Date().toLocaleString()}`, STYLES.dataEven);
   r++;
+
+  // Archive / manifest metadata block
+  if (STATE.archive && STATE.archive.filename) {
+    ws_set(ws, r++, 0, 'Archive / Collection Metadata', STYLES.idxSection);
+    const m = STATE.archive.manifest || {};
+    [
+      ['Archive filename',    STATE.archive.filename],
+      ['Manifest version',    m.format_version  || '—'],
+      ['Collection timestamp',m.generated_utc   || '—'],
+      ['Customer',            m.customer         || '—'],
+      ['Server label',        m.server_label     || '—'],
+      ['Passed',              m.passed           || '—'],
+      ['Warned',              m.warned           || '—'],
+      ['Failed',              m.failed           || '—'],
+      ['Imported at',         new Date().toLocaleString()],
+    ].forEach(([k, v]) => {
+      ws_set(ws, r, 0, k, STYLES.idxHeader);
+      ws_set(ws, r++, 1, String(v), STYLES.dataEven);
+    });
+    if (STATE.archive.warnings && STATE.archive.warnings.length > 0) {
+      ws_set(ws, r++, 0, 'Packaging warnings:', STYLES.idxHeader);
+      STATE.archive.warnings.forEach(w => ws_set(ws, r++, 0, w, STYLES.noData));
+    }
+    r++;
+  }
 
   ws_set(ws, r++, 0, 'Complete Collection Queries', STYLES.idxSection);
   ['#','Query ID','Title','Section','Output File','v8 Only?','Warn If Missing?','Status','Rows'].forEach((h,c) => ws_set(ws, r, c, h, STYLES.idxHeader));
@@ -1896,6 +2289,8 @@ function generateReport() {
     const wb = XLSX.utils.book_new();
     buildIndexSheet(wb);
     WORKBOOK_SHEETS.forEach(sheetName => buildSheet(wb, sheetName));
+    buildCollectionLogSheet(wb);
+    buildCollectionErrorsSheet(wb);
 
     const server   = (cfg.serverName   || 'SERVER'  ).replace(/[^A-Za-z0-9_-]/g, '_');
     const customer = (cfg.customerName || 'Customer').replace(/[^A-Za-z0-9_-]/g, '_');
