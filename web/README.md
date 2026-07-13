@@ -73,12 +73,14 @@ Drag-and-drop or select the **single `.tar` collection archive** produced by the
 > **Compatibility fallback:** individual `.csv` files may also be selected if you have a collection from an older script version.
 
 ### Step 6 — Download the complete workbook (Report tab)
-Click **Download Complete XLSX Report**.
+Enter optional report metadata (Customer, Prepared by, Report date, Server label) and click **Download Complete XLSX Report**.
+You will be prompted to confirm/edit the final `.xlsx` filename before download.
 
 Generated report filename:
 - `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx`
 
 The workbook is one document containing multiple worksheets including:
+- **Cover** — report title page with customer/prepared-by/date/server metadata
 - **Index** — summary with archive/manifest metadata, pass/warn/fail counts, and import timestamp
 - **Collection_Log** — `collection_log.txt` line by line
 - **Collection_Errors** — `collection_errors.log` line by line (or a clear "No errors recorded" row)
@@ -170,4 +172,3 @@ Individual CSV files and logs are packaged into the `.tar` archive and removed o
 ## Legacy Tool
 
 The original Perl tool `STORAGE_TOOLS_v2.113.pl` remains unchanged in the repository root. This web helper is separate and does not modify the legacy Perl workflow.
-

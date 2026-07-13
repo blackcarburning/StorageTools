@@ -273,6 +273,24 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       The report workbook contains the complete collection in one XLSX file with multiple worksheets organised by section.
       Sections with no data are shown as "No rows returned". Missing files are flagged as "Not imported".
     </p>
+    <div class="form-grid" style="margin-bottom:14px">
+      <div class="fg">
+        <label for="reportCustomerName">Report Customer Name</label>
+        <input type="text" id="reportCustomerName" placeholder="Customer name for this report">
+      </div>
+      <div class="fg">
+        <label for="reportPreparedBy">Prepared By</label>
+        <input type="text" id="reportPreparedBy" placeholder="Prepared by">
+      </div>
+      <div class="fg">
+        <label for="reportDate">Report Date</label>
+        <input type="text" id="reportDate" placeholder="YYYY-MM-DD">
+      </div>
+      <div class="fg">
+        <label for="reportServerName">Report Server Name / Label</label>
+        <input type="text" id="reportServerName" placeholder="Server name for this report">
+      </div>
+    </div>
     <div id="reportStats" class="stat-grid"></div>
     <div class="actions">
       <button class="btn btn-success" id="btnGenReport" onclick="generateReport()">⬇ Download Complete XLSX Report</button>
@@ -289,6 +307,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       <div>
         <h3>Core Worksheets</h3>
         <ul style="padding-left:16px;line-height:1.9">
+          <li>Cover — report metadata and executive title page</li>
           <li>Index — unified import status and row counts for every query</li>
           <li>Server — status, database, log, options, backup health</li>
           <li>Admins — administrator accounts</li>
@@ -1624,7 +1643,7 @@ function updateReportStats() {
   const imported = ALL_QUERIES.filter(q => STATE.imported[q.outputFile]).length;
   document.getElementById('reportStats').innerHTML = `
     <div class="stat-box"><div class="stat-num">${ALL_QUERIES.length}</div><div class="stat-lbl">Total queries</div></div>
-    <div class="stat-box"><div class="stat-num">${WORKBOOK_SHEETS.length + 3}</div><div class="stat-lbl">Workbook sheets (data + Index + Collection_Log + Collection_Errors)</div></div>
+    <div class="stat-box"><div class="stat-num">${WORKBOOK_SHEETS.length + 4}</div><div class="stat-lbl">Workbook sheets (Cover + data + Index + Collection_Log + Collection_Errors)</div></div>
     <div class="stat-box"><div class="stat-num">${imported}</div><div class="stat-lbl">Files imported</div></div>
     <div class="stat-box"><div class="stat-num">${ALL_QUERIES.length - imported}</div><div class="stat-lbl">Not imported</div></div>
   `;
@@ -1710,13 +1729,14 @@ const XLSX = (() => {
     return {
       fillRgb: style && style.fill && style.fill.fgColor && style.fill.fgColor.rgb ? String(style.fill.fgColor.rgb).toUpperCase() : '',
       fontRgb: style && style.font && style.font.color && style.font.color.rgb ? String(style.font.color.rgb).toUpperCase() : '',
+      fontSize: style && style.font && style.font.sz ? Number(style.font.sz) : 11,
       bold: !!(style && style.font && style.font.bold),
       wrapText: !!(style && style.alignment && style.alignment.wrapText)
     };
   }
 
   function fontKey(style) {
-    return JSON.stringify([!!style.bold, style.fontRgb || '']);
+    return JSON.stringify([!!style.bold, style.fontRgb || '', style.fontSize || 11]);
   }
 
   function createStyleRegistry() {
@@ -1743,7 +1763,7 @@ const XLSX = (() => {
       const key = fontKey(style);
       if (fontMap.has(key)) return fontMap.get(key);
       const idx = fonts.length;
-      fonts.push({ bold: style.bold, color: style.fontRgb, name: 'Calibri', size: 11 });
+      fonts.push({ bold: style.bold, color: style.fontRgb, name: 'Calibri', size: style.fontSize || 11 });
       fontMap.set(key, idx);
       return idx;
     }
@@ -1760,7 +1780,7 @@ const XLSX = (() => {
     function getStyleId(style) {
       const norm = normalizeStyle(style);
       const key = JSON.stringify(norm);
-      if (norm.fillRgb === '' && norm.fontRgb === '' && !norm.bold && !norm.wrapText) return 0;
+      if (norm.fillRgb === '' && norm.fontRgb === '' && !norm.bold && !norm.wrapText && (norm.fontSize === 11 || !Number.isFinite(norm.fontSize))) return 0;
       if (xfMap.has(key)) return xfMap.get(key);
       const idx = xfs.length;
       xfs.push({
@@ -1845,12 +1865,16 @@ const XLSX = (() => {
 
     const ref = ws['!ref'] || 'A1:A1';
     const cols = Array.isArray(ws['!cols']) ? ws['!cols'] : [];
+    const rowHeights = Array.isArray(ws['!rows']) ? ws['!rows'] : [];
+    const merges = Array.isArray(ws['!merges']) ? ws['!merges'] : [];
     const colXml = cols.length ? `<cols>${cols.map((col, i) => {
       const width = Number(col.wch || 10);
       return `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`;
     }).join('')}</cols>` : '';
 
     const rowsXml = rowNums.map(r => {
+      const rowDef = rowHeights[r] || {};
+      const rowAttrs = Number.isFinite(rowDef.hpt) ? ` ht="${Number(rowDef.hpt)}" customHeight="1"` : '';
       const cellsXml = rowMap.get(r).map(({ addr, cell }) => {
         const styleId = styles.getStyleId(cell.s);
         const styleAttr = styleId ? ` s="${styleId}"` : '';
@@ -1860,8 +1884,11 @@ const XLSX = (() => {
         const safeValue = cell.v == null || cell.t === 'n' ? '' : cell.v;
         return `<c r="${addr}" t="inlineStr"${styleAttr}><is>${textNode(safeValue)}</is></c>`;
       }).join('');
-      return `<row r="${r + 1}">${cellsXml}</row>`;
+      return `<row r="${r + 1}"${rowAttrs}>${cellsXml}</row>`;
     }).join('');
+    const mergeXml = merges.length
+      ? `<mergeCells count="${merges.length}">${merges.map(m => `<mergeCell ref="${encodeRange(m)}"/>`).join('')}</mergeCells>`
+      : '';
 
     return [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
@@ -1870,6 +1897,7 @@ const XLSX = (() => {
       '<sheetViews><sheetView workbookViewId="0"/></sheetViews>',
       colXml,
       `<sheetData>${rowsXml}</sheetData>`,
+      mergeXml,
       '</worksheet>'
     ].join('');
   }
@@ -2074,12 +2102,13 @@ const C = {
   warnText  : '9C5700',
 };
 
-function mkStyle(fillRgb, fontRgb, bold, wrapText) {
+function mkStyle(fillRgb, fontRgb, bold, wrapText, fontSize) {
   const s = {};
   if (fillRgb) s.fill = { patternType:'solid', fgColor:{ rgb: fillRgb } };
   const font = {};
   if (fontRgb) font.color = { rgb: fontRgb };
   if (bold) font.bold = true;
+  if (Number.isFinite(fontSize)) font.sz = fontSize;
   if (Object.keys(font).length) s.font = font;
   if (wrapText) s.alignment = { wrapText:true };
   return s;
@@ -2094,12 +2123,66 @@ const STYLES = {
   dataOdd      : mkStyle(C.altRow, null, false, false),
   noData       : mkStyle(C.noData, '6B7280', false, false),
   notImp       : mkStyle(C.notImp, C.warnText, false, false),
+  coverTitle   : mkStyle('1F4E79', 'FFFFFF', true, false, 22),
+  coverSubTitle: mkStyle('DDEBF7', '1F4E79', true, false, 13),
+  coverLabel   : mkStyle('EFF6FF', '1F4E79', true, false, 11),
+  coverValue   : mkStyle(null, null, false, true, 12),
+  coverMissing : mkStyle('F2F2F2', '6B7280', false, true, 12),
 };
+
+const COL_WIDTH_MIN = 8;
+const COL_WIDTH_MAX = 80;
+const COL_WIDTH_PADDING = 2;
+
+function createWidthTracker(minWch, maxWch) {
+  return { widths: [], minWch: Number(minWch) || COL_WIDTH_MIN, maxWch: Number(maxWch) || COL_WIDTH_MAX };
+}
+
+function displayValueLineWidth(value) {
+  if (value === null || value === undefined) return 0;
+  const text = value instanceof Date && Number.isFinite(value.getTime()) ? value.toISOString() : String(value);
+  const lines = text.split(/\r\n|\r|\n/);
+  let longest = 0;
+  lines.forEach(line => {
+    const len = Array.from(line).length;
+    if (len > longest) longest = len;
+  });
+  return longest;
+}
+
+function trackColumnWidth(ws, c, value) {
+  const tracker = ws && ws['!widthTracker'];
+  if (!tracker) return;
+  const width = displayValueLineWidth(value);
+  if (!tracker.widths[c] || width > tracker.widths[c]) tracker.widths[c] = width;
+}
+
+function applyTrackedColumnWidths(ws) {
+  const tracker = ws && ws['!widthTracker'];
+  if (!tracker) return;
+  const ref = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : { e: { c: 0 } };
+  const numCols = Math.max(ref.e.c + 1, tracker.widths.length || 0, 1);
+  const cols = [];
+  for (let c = 0; c < numCols; c++) {
+    const raw = (tracker.widths[c] || 0) + COL_WIDTH_PADDING;
+    const bounded = Math.min(tracker.maxWch, Math.max(tracker.minWch, raw));
+    cols.push({ wch: bounded });
+  }
+  ws['!cols'] = cols;
+  delete ws['!widthTracker'];
+}
 
 function ws_set(ws, r, c, value, style) {
   const addr = XLSX.utils.encode_cell({ r, c });
   const isNum = typeof value === 'number';
-  ws[addr] = { v: value, t: isNum ? 'n' : 's', s: style || STYLES.dataEven };
+  const displayValue = value === null || value === undefined ? '' : value;
+  let cellStyle = style || STYLES.dataEven;
+  if (typeof displayValue === 'string' && (displayValue.includes('\n') || displayValueLineWidth(displayValue) > COL_WIDTH_MAX) &&
+      !(cellStyle && cellStyle.alignment && cellStyle.alignment.wrapText)) {
+    cellStyle = { ...cellStyle, alignment: { wrapText: true } };
+  }
+  ws[addr] = { v: displayValue, t: isNum ? 'n' : 's', s: cellStyle };
+  trackColumnWidth(ws, c, displayValue);
   return addr;
 }
 
@@ -2159,8 +2242,115 @@ function addQueryBlock(ws, startRow, query, data) {
   return r;
 }
 
+function isoLocalDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function syncReportMetadataFromConfig(force) {
+  const cfg = readConfig();
+  const customerEl = document.getElementById('reportCustomerName');
+  const serverEl = document.getElementById('reportServerName');
+  const dateEl = document.getElementById('reportDate');
+  if (force || !customerEl.value.trim()) customerEl.value = cfg.customerName || '';
+  if (force || !serverEl.value.trim()) serverEl.value = cfg.serverName || '';
+  if (force || !dateEl.value.trim()) dateEl.value = isoLocalDate();
+}
+
+function readReportMetadata() {
+  const cfg = readConfig();
+  const customer = document.getElementById('reportCustomerName').value.trim() || cfg.customerName || '';
+  const preparedBy = document.getElementById('reportPreparedBy').value.trim();
+  const reportDate = document.getElementById('reportDate').value.trim() || isoLocalDate();
+  const server = document.getElementById('reportServerName').value.trim() || cfg.serverName || '';
+  return { customer, preparedBy, reportDate, server };
+}
+
+function displayReportValue(value) {
+  return value && String(value).trim() ? String(value).trim() : 'Not specified';
+}
+
+function sanitizedToken(value, fallback) {
+  const cleaned = String(value || '')
+    .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || fallback;
+}
+
+function sanitizeXlsxFilename(inputName, defaultFilename) {
+  let base = String(inputName || '').trim();
+  if (!base) base = defaultFilename;
+  base = base.replace(/(?:\.xlsx)+$/i, '').trim();
+  base = base.replace(/[\u0000-\u001f\u007f]/g, '');
+  base = base.replace(/[<>:"/\\|?*]/g, '_');
+  base = base.replace(/\.\.+/g, '_');
+  base = base.replace(/^[\s.]+|[\s.]+$/g, '');
+  if (!base || base === '.' || base === '..') {
+    base = String(defaultFilename || 'StorageTools_Report').replace(/\.xlsx$/i, '').replace(/[<>:"/\\|?*]/g, '_').trim();
+  }
+  if (!base) base = 'StorageTools_Report';
+  return `${base}.xlsx`;
+}
+
+function defaultReportFilename(meta) {
+  const customer = sanitizedToken(meta.customer, 'Customer').replace(/\s+/g, '_');
+  const server = sanitizedToken(meta.server, 'SERVER').replace(/\s+/g, '_');
+  const date = sanitizedToken(meta.reportDate, isoLocalDate()).replace(/\s+/g, '_');
+  return sanitizeXlsxFilename(`StorageTools_Complete_Report_${customer}_${server}_${date}`, 'StorageTools_Complete_Report');
+}
+
+function buildCoverSheet(wb, meta) {
+  const ws = {};
+  ws['!widthTracker'] = createWidthTracker(12, 44);
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+    { s: { r: 3, c: 0 }, e: { r: 3, c: 5 } },
+    { s: { r: 5, c: 1 }, e: { r: 5, c: 5 } },
+    { s: { r: 6, c: 1 }, e: { r: 6, c: 5 } },
+    { s: { r: 7, c: 1 }, e: { r: 7, c: 5 } },
+    { s: { r: 8, c: 1 }, e: { r: 8, c: 5 } },
+  ];
+  ws['!rows'] = [];
+  ws['!rows'][0] = { hpt: 42 };
+  ws['!rows'][1] = { hpt: 24 };
+  ws['!rows'][3] = { hpt: 22 };
+  ws['!rows'][5] = { hpt: 22 };
+  ws['!rows'][6] = { hpt: 22 };
+  ws['!rows'][7] = { hpt: 22 };
+  ws['!rows'][8] = { hpt: 22 };
+
+  ws_set(ws, 0, 0, 'StorageTools — IBM Storage Protect Report', STYLES.coverTitle);
+  ws_set(ws, 1, 0, 'Executive Collection Workbook', STYLES.coverSubTitle);
+  ws_set(ws, 3, 0, 'Report Details', STYLES.idxSection);
+
+  const fields = [
+    ['Customer name', meta.customer],
+    ['Prepared by', meta.preparedBy],
+    ['Report date', meta.reportDate],
+    ['Server name / label', meta.server],
+  ];
+  fields.forEach((field, i) => {
+    const row = 5 + i;
+    const value = displayReportValue(field[1]);
+    ws_set(ws, row, 0, field[0], STYLES.coverLabel);
+    ws_set(ws, row, 1, value, value === 'Not specified' ? STYLES.coverMissing : STYLES.coverValue);
+    ws_updateRef(ws, row, 5);
+  });
+
+  ws_updateRef(ws, 0, 5);
+  ws_updateRef(ws, 8, 5);
+  applyTrackedColumnWidths(ws);
+  XLSX.utils.book_append_sheet(wb, ws, 'Cover');
+}
+
 function buildSheet(wb, sheetName) {
   const ws = {};
+  ws['!widthTracker'] = createWidthTracker(COL_WIDTH_MIN, COL_WIDTH_MAX);
   let r = 0;
   const filtered = ALL_QUERIES.filter(q => q.section === sheetName);
 
@@ -2170,18 +2360,14 @@ function buildSheet(wb, sheetName) {
   });
 
   if (!ws['!ref']) ws['!ref'] = 'A1:A1';
-
-  const range   = XLSX.utils.decode_range(ws['!ref']);
-  const numCols = range.e.c + 1;
-  const cols    = [];
-  for (let i = 0; i < numCols; i++) cols.push({ wch: i === 0 ? 38 : 22 });
-  ws['!cols'] = cols;
+  applyTrackedColumnWidths(ws);
 
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
 }
 
 function buildCollectionLogSheet(wb) {
   const ws = {};
+  ws['!widthTracker'] = createWidthTracker(COL_WIDTH_MIN, COL_WIDTH_MAX);
   let r = 0;
   const logText = STATE.archive && STATE.archive.collectionLog;
 
@@ -2196,12 +2382,13 @@ function buildCollectionLogSheet(wb) {
   }
 
   ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:Math.max(0,r-1),c:0} });
-  ws['!cols'] = [{ wch: 120 }];
+  applyTrackedColumnWidths(ws);
   XLSX.utils.book_append_sheet(wb, ws, 'Collection_Log');
 }
 
 function buildCollectionErrorsSheet(wb) {
   const ws = {};
+  ws['!widthTracker'] = createWidthTracker(COL_WIDTH_MIN, COL_WIDTH_MAX);
   let r = 0;
   const errText = STATE.archive ? STATE.archive.collectionErrors : undefined;
 
@@ -2218,19 +2405,21 @@ function buildCollectionErrorsSheet(wb) {
   }
 
   ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:Math.max(0,r-1),c:0} });
-  ws['!cols'] = [{ wch: 120 }];
+  applyTrackedColumnWidths(ws);
   XLSX.utils.book_append_sheet(wb, ws, 'Collection_Errors');
 }
 
-function buildIndexSheet(wb) {
+function buildIndexSheet(wb, reportMeta) {
   const ws = {};
+  ws['!widthTracker'] = createWidthTracker(COL_WIDTH_MIN, COL_WIDTH_MAX);
   let r = 0;
   const cfg = readConfig();
 
+  const metadata = reportMeta || readReportMetadata();
   ws_set(ws, r++, 0, 'StorageTools — IBM Storage Protect Complete Report', STYLES.idxSection);
-  ws_set(ws, r,   0, `Customer: ${cfg.customerName || '—'}`, STYLES.dataEven);
-  ws_set(ws, r++, 2, `Server: ${cfg.serverName || '—'}`, STYLES.dataEven);
-  ws_set(ws, r++, 0, `Generated: ${new Date().toLocaleString()}`, STYLES.dataEven);
+  ws_set(ws, r,   0, `Customer: ${metadata.customer || cfg.customerName || '—'}`, STYLES.dataEven);
+  ws_set(ws, r++, 2, `Server: ${metadata.server || cfg.serverName || '—'}`, STYLES.dataEven);
+  ws_set(ws, r++, 0, `Report date: ${metadata.reportDate || isoLocalDate()}`, STYLES.dataEven);
   r++;
 
   // Archive / manifest metadata block
@@ -2274,28 +2463,33 @@ function buildIndexSheet(wb) {
   });
 
   ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:r,c:8} });
-  ws['!cols'] = [
-    {wch:5},{wch:28},{wch:42},{wch:18},{wch:30},{wch:8},{wch:14},{wch:18},{wch:8}
-  ];
+  applyTrackedColumnWidths(ws);
 
   XLSX.utils.book_append_sheet(wb, ws, 'Index');
 }
 
 function generateReport() {
+  const reportMeta = readReportMetadata();
+  const defaultName = defaultReportFilename(reportMeta);
+  const promptValue = prompt('Confirm XLSX filename', defaultName);
+  if (promptValue === null) {
+    const statusEl = document.getElementById('reportStatus');
+    statusEl.className = 'alert alert-info';
+    statusEl.textContent = 'XLSX generation canceled.';
+    statusEl.style.display = 'block';
+    showStatus('XLSX generation canceled.');
+    return;
+  }
+  const filename = sanitizeXlsxFilename(promptValue.trim() || defaultName, defaultName);
   showStatus('Generating complete XLSX workbook…');
-  const cfg = readConfig();
 
   try {
     const wb = XLSX.utils.book_new();
-    buildIndexSheet(wb);
+    buildCoverSheet(wb, reportMeta);
+    buildIndexSheet(wb, reportMeta);
     WORKBOOK_SHEETS.forEach(sheetName => buildSheet(wb, sheetName));
     buildCollectionLogSheet(wb);
     buildCollectionErrorsSheet(wb);
-
-    const server   = (cfg.serverName   || 'SERVER'  ).replace(/[^A-Za-z0-9_-]/g, '_');
-    const customer = (cfg.customerName || 'Customer').replace(/[^A-Za-z0-9_-]/g, '_');
-    const date     = new Date().toISOString().slice(0,10);
-    const filename = `StorageTools_Complete_Report_${customer}_${server}_${date}.xlsx`;
 
     const wbout = XLSX.write(wb, { bookType:'xlsx', type:'array' });
     const blob  = new Blob([wbout], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -2391,6 +2585,7 @@ function loadConfig() {
   el.textContent = 'Settings loaded. Please re-enter your password.';
   el.style.display = 'block';
   setTimeout(() => { el.style.display = 'none'; }, 4000);
+  syncReportMetadataFromConfig(true);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2479,6 +2674,7 @@ function initGenerateTab() {
       document.getElementById('outputDirUnix').value    = cfg.outputDirUnix    || savedOutDir;
     } catch(e) { /* ignore */ }
   }
+  syncReportMetadataFromConfig(true);
 })();
 
 </script>
