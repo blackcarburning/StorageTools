@@ -515,6 +515,9 @@ const DOC_QUERIES = [
     outputFile:'doc_35_drm_media.csv' },
 
   // ── Advanced v8 ──────────────────────────────────────────────────────────
+  // SELECT * is intentional for these version-sensitive views: IBM documents the table names
+  // but column availability varies across 8.1.x fix packs.  Use doc_41_syscat_key_cols to
+  // discover the exact columns on your server.
   { id:'doc_36_containers', title:'Containers (Directory/Cloud Pools)', section:'Advanced_v8', v8only:true,
     sql:"SELECT * FROM CONTAINERS ORDER BY STGPOOL_NAME,STATE,CONTAINER_NAME",
     outputFile:'doc_36_containers.csv' },

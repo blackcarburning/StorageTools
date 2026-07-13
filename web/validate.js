@@ -42,7 +42,8 @@ const html = fs.readFileSync(HTML_FILE, 'utf8');
 
 // ─── 1. JavaScript syntax ────────────────────────────────────────────────────
 section('1. JavaScript syntax');
-const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+// Use case-insensitive match to handle any HTML casing (also satisfies CodeQL js/bad-tag-filter).
+const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/i);
 if (!scriptMatch) {
   fail('No <script> block found in index.html');
   process.exit(1);
@@ -178,7 +179,6 @@ const divisionQueries = allQueries.filter(q =>
 );
 let missingNullif = 0;
 for (const q of divisionQueries) {
-  const divisors = [...q.sql.matchAll(/FLOAT\(([A-Z_]+)\)\s*\*?\s*(?=\/)(?!NULLIF)/gi)];
   // Check: any FLOAT(x)/FLOAT(y) where y is not protected by NULLIF
   if (/FLOAT\([^)]+\)\s*\/\s*FLOAT\((?!NULLIF)[^)]+\)/i.test(q.sql)) {
     fail(`Query ${q.id} may divide by zero (FLOAT/FLOAT without NULLIF on divisor)`);
