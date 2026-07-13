@@ -43,7 +43,9 @@ try {
 }
 
 let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName,
-    parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet;
+    parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet,
+    XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
+    sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport;
 try {
   const elements = new Map();
   const makeEl = (value = '') => ({
@@ -67,6 +69,10 @@ try {
     optfileUnix: '',
     serverName: 'TSMSERVER01',
     customerName: 'ACME',
+    reportCustomerName: '',
+    reportPreparedBy: '',
+    reportDate: '',
+    reportServerName: '',
     outputDirWindows: 'StorageTools_Output',
     outputDirUnix: 'StorageTools_Output',
     completeQueryStats: '',
@@ -91,13 +97,14 @@ try {
     addEventListener() {},
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
-    'document', 'localStorage', 'alert', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet };`
+    'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport };`
   );
   const result = sandbox(
     mockDoc,
     { getItem: () => null, setItem: () => {} },
     () => {},
+    () => null,
     { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} },
     class Blob {},
     TextEncoder,
@@ -106,7 +113,9 @@ try {
     () => 0,
   );
   ({ ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName,
-     parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet } = result);
+     parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX,
+     buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
+     sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport } = result);
 } catch (err) {
   fail(`Could not evaluate index.html script: ${err.message}`);
   process.exit(1);
@@ -515,6 +524,221 @@ if (typeof buildCollectionLogSheet !== 'function' || typeof buildCollectionError
   else fail('generateReport missing buildCollectionLogSheet or buildCollectionErrorsSheet call');
 
   STATE.archive = null; // restore
+}
+
+section('17. XLSX auto-fit widths and cover worksheet');
+if (typeof buildSheet !== 'function' || typeof buildCoverSheet !== 'function' || typeof buildIndexSheet !== 'function') {
+  fail('buildSheet/buildCoverSheet/buildIndexSheet not exported');
+} else {
+  const serverQuery = ALL_QUERIES.find(q => q.section === 'Server');
+  if (!serverQuery) {
+    fail('No Server query found for width tests');
+  } else {
+    STATE.imported = {};
+    STATE.imported[serverQuery.outputFile] = {
+      name: serverQuery.outputFile,
+      headers: ['H1', 'H2', 'VeryLongHeaderName123'],
+      rows: [
+        ['1', 'short\nthis is the longest line', 'x'],
+        ['2', 'tiny', 'y'],
+      ],
+    };
+    const wbA = { SheetNames: [], Sheets: {} };
+    const addSheetA = (ws, name) => { wbA.SheetNames.push(name); wbA.Sheets[name] = ws; };
+    buildSheet({ SheetNames: wbA.SheetNames, Sheets: wbA.Sheets, utils: { book_append_sheet: addSheetA } }, 'Server');
+    const wsA = wbA.Sheets.Server;
+    if (wsA && Array.isArray(wsA['!cols'])) ok('XLSX widths: buildSheet assigns !cols');
+    else fail('XLSX widths: !cols missing on data sheet');
+
+    const w1 = wsA && wsA['!cols'] && wsA['!cols'][1] ? wsA['!cols'][1].wch : 0;
+    if (w1 === 26) ok('XLSX widths: multiline values use longest line width (+padding)');
+    else fail(`XLSX widths: expected multiline width 26, got ${w1}`);
+
+    const w2 = wsA && wsA['!cols'] && wsA['!cols'][2] ? wsA['!cols'][2].wch : 0;
+    if (w2 === 23) ok('XLSX widths: header text contributes to column width');
+    else fail(`XLSX widths: expected header-driven width 23, got ${w2}`);
+
+    STATE.imported[serverQuery.outputFile] = {
+      name: serverQuery.outputFile,
+      headers: ['ID', 'MESSAGE'],
+      rows: [['1', 'L'.repeat(400)]],
+    };
+    const wbB = { SheetNames: [], Sheets: {} };
+    const addSheetB = (ws, name) => { wbB.SheetNames.push(name); wbB.Sheets[name] = ws; };
+    buildSheet({ SheetNames: wbB.SheetNames, Sheets: wbB.Sheets, utils: { book_append_sheet: addSheetB } }, 'Server');
+    const maxW = wbB.Sheets.Server && wbB.Sheets.Server['!cols'] && wbB.Sheets.Server['!cols'][1]
+      ? wbB.Sheets.Server['!cols'][1].wch : 0;
+    if (maxW === 80) ok('XLSX widths: maximum width bound enforced');
+    else fail(`XLSX widths: expected max width 80, got ${maxW}`);
+
+    STATE.imported[serverQuery.outputFile] = {
+      name: serverQuery.outputFile,
+      headers: ['ID', 'MESSAGE'],
+      rows: [],
+    };
+    buildSheet({ SheetNames: wbB.SheetNames, Sheets: wbB.Sheets, utils: { book_append_sheet: addSheetB } }, 'Server');
+    const minW = wbB.Sheets.Server && wbB.Sheets.Server['!cols'] && wbB.Sheets.Server['!cols'][0]
+      ? wbB.Sheets.Server['!cols'][0].wch : 0;
+    if (minW >= 8) ok('XLSX widths: minimum width bound enforced');
+    else fail(`XLSX widths: expected minimum width >=8, got ${minW}`);
+  }
+
+  STATE.imported = {};
+  STATE.archive = null;
+  const wbAll = { SheetNames: [], Sheets: {} };
+  const addSheetAll = (ws, name) => { wbAll.SheetNames.push(name); wbAll.Sheets[name] = ws; };
+  const reportMeta = { customer: 'Acme', preparedBy: 'Analyst', reportDate: '2026-07-13', server: 'SRV1' };
+  buildCoverSheet({ SheetNames: wbAll.SheetNames, Sheets: wbAll.Sheets, utils: { book_append_sheet: addSheetAll } }, reportMeta);
+  buildIndexSheet({ SheetNames: wbAll.SheetNames, Sheets: wbAll.Sheets, utils: { book_append_sheet: addSheetAll } }, reportMeta);
+  for (const name of WORKBOOK_SHEETS) {
+    buildSheet({ SheetNames: wbAll.SheetNames, Sheets: wbAll.Sheets, utils: { book_append_sheet: addSheetAll } }, name);
+  }
+  buildCollectionLogSheet({ SheetNames: wbAll.SheetNames, Sheets: wbAll.Sheets, utils: { book_append_sheet: addSheetAll } });
+  buildCollectionErrorsSheet({ SheetNames: wbAll.SheetNames, Sheets: wbAll.Sheets, utils: { book_append_sheet: addSheetAll } });
+
+  if (wbAll.SheetNames[0] === 'Cover') ok('Cover sheet is first worksheet');
+  else fail(`Expected first worksheet to be Cover, got ${JSON.stringify(wbAll.SheetNames[0])}`);
+
+  const missingCols = wbAll.SheetNames.filter(name => !(wbAll.Sheets[name] && Array.isArray(wbAll.Sheets[name]['!cols']) && wbAll.Sheets[name]['!cols'].length > 0));
+  if (missingCols.length === 0) ok('All generated worksheets include calculated column widths');
+  else fail(`Sheets missing calculated widths: ${missingCols.join(', ')}`);
+
+  const coverWs = wbAll.Sheets.Cover;
+  if (coverWs && coverWs.B6 && coverWs.B7 && coverWs.B8 && coverWs.B9) ok('Cover includes all report metadata fields');
+  else fail('Cover missing one or more metadata value cells');
+
+  const wbBlank = { SheetNames: [], Sheets: {} };
+  const addBlank = (ws, name) => { wbBlank.SheetNames.push(name); wbBlank.Sheets[name] = ws; };
+  buildCoverSheet({ SheetNames: wbBlank.SheetNames, Sheets: wbBlank.Sheets, utils: { book_append_sheet: addBlank } },
+    { customer: '', preparedBy: '', reportDate: '', server: '' });
+  const blankVals = ['B6', 'B7', 'B8', 'B9'].map(a => wbBlank.Sheets.Cover[a] && wbBlank.Sheets.Cover[a].v);
+  if (blankVals.every(v => v === 'Not specified')) ok('Blank cover metadata renders as "Not specified" placeholders');
+  else fail(`Expected all blank cover placeholders to be "Not specified", got ${JSON.stringify(blankVals)}`);
+
+  const realWb = XLSX.utils.book_new();
+  buildCoverSheet(realWb, reportMeta);
+  const bytes = XLSX.write(realWb, { bookType: 'xlsx', type: 'array' });
+  function unzipStoredEntries(uint8) {
+    const data = Buffer.from(uint8);
+    const out = new Map();
+    let p = 0;
+    while (p + 30 <= data.length) {
+      if (data.readUInt32LE(p) !== 0x04034b50) break;
+      const comp = data.readUInt16LE(p + 8);
+      const size = data.readUInt32LE(p + 22);
+      const nameLen = data.readUInt16LE(p + 26);
+      const extraLen = data.readUInt16LE(p + 28);
+      const nameStart = p + 30;
+      const dataStart = nameStart + nameLen + extraLen;
+      const name = data.slice(nameStart, nameStart + nameLen).toString('utf8');
+      if (comp !== 0) break;
+      out.set(name, data.slice(dataStart, dataStart + size).toString('utf8'));
+      p = dataStart + size;
+    }
+    return out;
+  }
+  const zipEntries = unzipStoredEntries(bytes);
+  const coverXml = zipEntries.get('xl/worksheets/sheet1.xml') || '';
+  const stylesXml = zipEntries.get('xl/styles.xml') || '';
+  if (/<mergeCells/.test(coverXml) && /A1:F1/.test(coverXml)) ok('Cover XML includes merged title cells');
+  else fail('Cover XML missing expected merges');
+  if (/ht="42"/.test(coverXml)) ok('Cover XML includes designed row heights');
+  else fail('Cover XML missing expected custom row height');
+  if (/<sz val="22"\/>/.test(stylesXml)) ok('Cover XML styles include large title font size');
+  else fail('Cover XML missing large title font size');
+}
+
+section('18. Report metadata defaults and filename handling');
+if (typeof syncReportMetadataFromConfig !== 'function' || typeof readReportMetadata !== 'function' ||
+    typeof sanitizeXlsxFilename !== 'function' || typeof defaultReportFilename !== 'function' ||
+    typeof isoLocalDate !== 'function') {
+  fail('Report metadata helper functions not exported');
+} else {
+  const baseDate = isoLocalDate();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(baseDate)) ok('isoLocalDate returns YYYY-MM-DD');
+  else fail(`isoLocalDate should return YYYY-MM-DD, got ${JSON.stringify(baseDate)}`);
+
+  const mkEl = id => {
+    const m = html.match(new RegExp(`id="${id}"`));
+    return !!m;
+  };
+  if (mkEl('reportCustomerName') && mkEl('reportPreparedBy') && mkEl('reportDate') && mkEl('reportServerName'))
+    ok('Report tab includes all metadata input fields');
+  else fail('Report tab missing one or more metadata input fields');
+
+  // Re-evaluate with editable DOM values for metadata/default tests.
+  const elements2 = new Map();
+  const makeEl2 = (value = '') => ({
+    value, innerHTML: '', textContent: '', className: '', href: '', download: '', style: {},
+    classList: { add() {}, remove() {} }, addEventListener() {}, click() {},
+  });
+  const defaults2 = {
+    dsmadmcPath: 'C:\\Program Files\\Tivoli\\TSM\\baclient\\dsmadmc.exe',
+    dsmadmcPathUnix: '/opt/tivoli/tsm/client/ba/bin/dsmadmc',
+    adminId: 'ADMIN', adminPa: 'PASSWORD', optfileWindows: '', optfileUnix: '',
+    serverName: 'CONFIG_SERVER', customerName: 'CONFIG_CUSTOMER',
+    reportCustomerName: '', reportPreparedBy: '', reportDate: '', reportServerName: '',
+    outputDirWindows: 'StorageTools_Output', outputDirUnix: 'StorageTools_Output',
+    completeQueryStats: '', importTableAll: '', importSummary: '', reportStats: '', reportStatus: '',
+    statusBar: '', configStatus: '', btnGenReport: '', dropZone: '', fileInput: '',
+  };
+  Object.entries(defaults2).forEach(([k, v]) => elements2.set(k, makeEl2(v)));
+  const mockDoc2 = {
+    querySelectorAll: () => ({ forEach() {} }),
+    getElementById(id) { if (!elements2.has(id)) elements2.set(id, makeEl2('')); return elements2.get(id); },
+    createElement() { return makeEl2(''); },
+    addEventListener() {},
+  };
+  const fn2 = new Function( // eslint-disable-line no-new-func
+    'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
+    `${js}; return { syncReportMetadataFromConfig, readReportMetadata, readConfig, defaultReportFilename, sanitizeXlsxFilename, generateReport };`
+  );
+  let urlCalls = 0;
+  const ctx2 = fn2(
+    mockDoc2,
+    { getItem: () => null, setItem: () => {} },
+    () => {},
+    () => null,
+    { createObjectURL: () => { urlCalls++; return 'blob:test'; }, revokeObjectURL: () => {} },
+    class Blob {},
+    TextEncoder,
+    TextDecoder,
+    () => {},
+    () => 0,
+  );
+  ctx2.syncReportMetadataFromConfig(true);
+  const m = ctx2.readReportMetadata();
+  if (m.customer === 'CONFIG_CUSTOMER' && m.server === 'CONFIG_SERVER') ok('Report fields default from setup customer/server values');
+  else fail(`Report defaults should mirror setup values, got ${JSON.stringify(m)}`);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(m.reportDate)) ok('Report date defaults to local ISO date');
+  else fail(`Report date default invalid: ${JSON.stringify(m.reportDate)}`);
+  if (m.preparedBy === '') ok('Prepared by defaults blank');
+  else fail(`Prepared by should default blank, got ${JSON.stringify(m.preparedBy)}`);
+
+  const cfgAfter = ctx2.readConfig();
+  if (cfgAfter.serverName === 'CONFIG_SERVER' && cfgAfter.customerName === 'CONFIG_CUSTOMER') ok('Report metadata defaults do not alter connection/server config fields');
+  else fail('Report metadata defaults unexpectedly modified configuration fields');
+
+  const defFile = ctx2.defaultReportFilename({ customer: 'Cust:One', server: '../Srv', reportDate: '2026-07-13', preparedBy: '' });
+  if (/\.xlsx$/i.test(defFile) && !/[<>:"/\\|?*\u0000-\u001f]/.test(defFile)) ok('Default filename is sanitized and ends with .xlsx');
+  else fail(`Default filename invalid: ${JSON.stringify(defFile)}`);
+
+  const s1 = ctx2.sanitizeXlsxFilename('bad<>:"/\\|?*name.xlsx.xlsx', 'Default.xlsx');
+  if (s1 === 'bad_________name.xlsx') ok('sanitizeXlsxFilename removes forbidden chars and duplicate .xlsx');
+  else fail(`Unexpected forbidden-char sanitization result: ${JSON.stringify(s1)}`);
+  const s2 = ctx2.sanitizeXlsxFilename('../path/..\\report .xlsx', 'Default.xlsx');
+  if (s2 === '__path___report.xlsx') ok('sanitizeXlsxFilename strips path-like input and trailing spaces/dots');
+  else fail(`Unexpected path sanitization result: ${JSON.stringify(s2)}`);
+  const s3 = ctx2.sanitizeXlsxFilename('   ', 'Default.xlsx');
+  if (s3 === 'Default.xlsx') ok('sanitizeXlsxFilename uses default on blank input');
+  else fail(`Expected blank input to use default filename, got ${JSON.stringify(s3)}`);
+
+  ctx2.generateReport();
+  if (urlCalls === 0) ok('Canceled filename prompt skips workbook generation/download');
+  else fail('Canceled filename prompt should not generate/download workbook');
+  const status = elements2.get('reportStatus');
+  if (status && /canceled/i.test(String(status.textContent))) ok('Canceled filename prompt reports non-error canceled status');
+  else fail(`Canceled prompt status message missing/incorrect: ${JSON.stringify(status && status.textContent)}`);
 }
 
 console.log('\n============================================================');
