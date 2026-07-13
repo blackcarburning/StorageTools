@@ -1333,7 +1333,12 @@ function parseDsmOutput(text) {
 // Reads an uncompressed .tar buffer; returns files by base filename.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const TAR_MAX_ENTRIES   = 10000;
+// TAR archive limit constants:
+// - 10,000 entries: well above any realistic collection (76 queries + 3 logs = ~80 files)
+//   but avoids runaway memory use if a user accidentally loads a large archive.
+// - 50 MB per file: generous for CSV data; guards against a single bloated entry.
+// - 300 MB total: practical browser memory budget; a typical collection is < 5 MB.
+const TAR_MAX_ENTRIES    = 10000;
 const TAR_MAX_FILE_BYTES = 50 * 1024 * 1024;   // 50 MB per file
 const TAR_MAX_TOTAL_BYTES = 300 * 1024 * 1024; // 300 MB total
 
@@ -1358,7 +1363,11 @@ function parseTarArchive(buffer) {
     return parseInt(s, 8);
   }
 
-  /** Return true when path is safe (no traversal, not absolute, no drive letters). */
+  /** Return true when path is safe (no traversal, not absolute, no drive letters).
+   *  Caller should pass the raw fullName (before any directory-stripping) so that
+   *  traversal sequences like ../ are not stripped away before this check runs.
+   *  backslash paths are also rejected even though the caller normalises them to /
+   *  first, as a defence-in-depth measure for any direct callers. */
   function isSafePath(p) {
     if (!p || p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.includes('\\')) return false;
     return !p.split('/').some(part => part === '..');
@@ -1426,7 +1435,7 @@ function parseTarArchive(buffer) {
         if (files.has(baseName)) {
           warnings.push(`Duplicate filename "${baseName}"; first occurrence used.`);
         } else {
-          files.set(baseName, new Uint8Array(bytes.buffer, bytes.byteOffset + offset, size).slice());
+          files.set(baseName, bytes.slice(offset, offset + size));
         }
       }
     }
@@ -1485,7 +1494,7 @@ function handleTarFile(file) {
       filename       : file.name,
       manifest       : maniRaw ? parseManifest(decode(maniRaw)) : null,
       collectionLog  : logRaw  ? decode(logRaw)  : null,
-      collectionErrors: errRaw !== undefined ? decode(errRaw) : null,
+      collectionErrors: errRaw ? decode(errRaw) : null,
       warnings       : result.warnings.slice()
     };
 
@@ -1615,7 +1624,7 @@ function updateReportStats() {
   const imported = ALL_QUERIES.filter(q => STATE.imported[q.outputFile]).length;
   document.getElementById('reportStats').innerHTML = `
     <div class="stat-box"><div class="stat-num">${ALL_QUERIES.length}</div><div class="stat-lbl">Total queries</div></div>
-    <div class="stat-box"><div class="stat-num">${WORKBOOK_SHEETS.length + 3}</div><div class="stat-lbl">Workbook sheets incl. Index+logs</div></div>
+    <div class="stat-box"><div class="stat-num">${WORKBOOK_SHEETS.length + 3}</div><div class="stat-lbl">Workbook sheets (data + Index + Collection_Log + Collection_Errors)</div></div>
     <div class="stat-box"><div class="stat-num">${imported}</div><div class="stat-lbl">Files imported</div></div>
     <div class="stat-box"><div class="stat-num">${ALL_QUERIES.length - imported}</div><div class="stat-lbl">Not imported</div></div>
   `;
