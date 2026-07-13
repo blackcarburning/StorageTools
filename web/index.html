@@ -941,8 +941,8 @@ function buildShLine(query, numStr, total) {
   const sql   = shellQuote(query.sql);
   const title = shellQuote(query.title);
   const num   = shellQuote(`${numStr}/${total}`);
-  const warn  = shellQuote(getOptionalWarnFlag(query));
-  return `run_query ${num} ${title} ${warn} ${sql} "$OUTDIR/${query.outputFile}"`;
+  const warnIfMissingQuoted = shellQuote(getOptionalWarnFlag(query));
+  return `run_query ${num} ${title} ${warnIfMissingQuoted} ${sql} "$OUTDIR/${query.outputFile}"`;
 }
 
 function generateShContent() {
@@ -1047,7 +1047,8 @@ function generateShContent() {
   lines.push('}');
   lines.push('');
   lines.push('# run_query QNUM QTITLE QWARNMISSING QSQL QOUT');
-  lines.push('#   QWARNMISSING=1 downgrades RC_NOTABLE to WARN for optional views.');
+  lines.push('#   QNUM=query counter, QTITLE=display title, QWARNMISSING=1 downgrades');
+  lines.push('#   RC_NOTABLE to WARN for optional views, QSQL=statement, QOUT=CSV file.');
   lines.push('run_query() {');
   lines.push('  QNUM="$1"; QTITLE="$2"; QWARNMISSING="$3"; QSQL="$4"; QOUT="$5"');
   lines.push('  QTMP="$(mktemp 2>/dev/null)" || QTMP="${OUTDIR}/q$$.tmp"');

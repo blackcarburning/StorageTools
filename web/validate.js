@@ -196,7 +196,7 @@ if (cmd.includes('IBM Storage Protect — Complete Collection')) ok('CMD script 
 else fail('CMD script missing complete collection label');
 if (sh.includes('IBM Storage Protect — Complete Collection')) ok('SH script is labeled as complete collection');
 else fail('SH script missing complete collection label');
-const runQueryCount = (sh.match(/^run_query /gm) || []).length;
+const runQueryCount = (sh.match(/^\s*run_query /gm) || []).length;
 if (runQueryCount === ALL_QUERIES.length) ok(`SH script contains all ${ALL_QUERIES.length} queries`);
 else fail(`SH script run_query count mismatch: expected ${ALL_QUERIES.length}, got ${runQueryCount}`);
 const missingCmdOutputs = ALL_QUERIES.filter(q => !cmd.includes(q.outputFile));
@@ -262,12 +262,14 @@ else fail(`README missing current query count (${ALL_QUERIES.length} queries)`);
 
 section('11. POSIX shell syntax');
 const tmpSh = path.join(os.tmpdir(), 'storagetools-complete-test.sh');
-fs.writeFileSync(tmpSh, sh, 'utf8');
 try {
+  fs.writeFileSync(tmpSh, sh, 'utf8');
   cp.execFileSync('sh', ['-n', tmpSh], { stdio: 'pipe' });
   ok('Generated SH passes sh -n');
 } catch (err) {
   fail(`Generated SH failed sh -n: ${String(err.stderr || err.message)}`);
+} finally {
+  try { fs.unlinkSync(tmpSh); } catch (_) {}
 }
 
 console.log('\n============================================================');
