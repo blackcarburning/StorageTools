@@ -42,7 +42,8 @@ try {
   process.exit(1);
 }
 
-let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName;
+let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName,
+    parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet;
 try {
   const elements = new Map();
   const makeEl = (value = '') => ({
@@ -90,8 +91,8 @@ try {
     addEventListener() {},
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
-    'document', 'localStorage', 'alert', 'URL', 'Blob', 'TextEncoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName };`
+    'document', 'localStorage', 'alert', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet };`
   );
   const result = sandbox(
     mockDoc,
@@ -100,10 +101,12 @@ try {
     { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} },
     class Blob {},
     TextEncoder,
+    TextDecoder,
     () => {},
     () => 0,
   );
-  ({ ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName } = result);
+  ({ ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName,
+     parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet } = result);
 } catch (err) {
   fail(`Could not evaluate index.html script: ${err.message}`);
   process.exit(1);
@@ -270,6 +273,248 @@ try {
   fail(`Generated SH failed sh -n: ${String(err.stderr || err.message)}`);
 } finally {
   try { fs.unlinkSync(tmpSh); } catch (_) {}
+}
+
+section('12. SH archive packaging');
+const shArchiveTokens = [
+  'command -v tar',
+  'manifest.txt',
+  'format=StorageTools-Collection',
+  'query_count=',
+  'ARCHIVE_TMP',
+  'ARCHIVE_FILE',
+  'ARCHIVE_SERVER',
+  'tar -cf',
+  'mv "$ARCHIVE_TMP" "$ARCHIVE_FILE"',
+  'rm -rf "$OUTDIR"',
+];
+for (const token of shArchiveTokens) {
+  if (sh.includes(token)) ok(`SH includes: ${token}`);
+  else fail(`SH missing: ${token}`);
+}
+if (/StorageTools_Complete_/.test(sh)) ok('SH archive filename follows StorageTools_Complete_ prefix');
+else fail('SH archive filename missing StorageTools_Complete_ prefix');
+
+section('13. CMD archive packaging');
+const cmdArchiveTokens = [
+  'where tar',
+  'manifest.txt',
+  'format=StorageTools-Collection',
+  'ARCHIVE_TMP',
+  'ARCHIVE_FILE',
+  'ARCHIVE_SERVER',
+  'tar -cf',
+  'MOVE /Y',
+  'RD /S /Q',
+];
+for (const token of cmdArchiveTokens) {
+  if (cmd.includes(token)) ok(`CMD includes: ${token}`);
+  else fail(`CMD missing: ${token}`);
+}
+if (/StorageTools_Complete_/.test(cmd)) ok('CMD archive filename follows StorageTools_Complete_ prefix');
+else fail('CMD archive filename missing StorageTools_Complete_ prefix');
+
+section('14. TAR parser unit tests');
+if (typeof parseTarArchive !== 'function') {
+  fail('parseTarArchive is not exported');
+} else {
+  // ── TAR builder helper ──────────────────────────────────────────────────
+  // Node.js Buffers may share a pool ArrayBuffer with non-zero byteOffset.
+  // Always extract a standalone ArrayBuffer before passing to parseTarArchive.
+  function toAB(buf) {
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  }
+  function buildTarHeader(name, size, typeflag) {
+    const hdr = Buffer.alloc(512, 0);
+    const nameBytes = Buffer.from(name, 'utf8');
+    nameBytes.copy(hdr, 0, 0, Math.min(100, nameBytes.length));
+    Buffer.from('0000644\0', 'utf8').copy(hdr, 100);
+    Buffer.from('0000000\0', 'utf8').copy(hdr, 108);
+    Buffer.from('0000000\0', 'utf8').copy(hdr, 116);
+    const sizeStr = ('0'.repeat(11) + size.toString(8)).slice(-11) + '\0';
+    Buffer.from(sizeStr, 'utf8').copy(hdr, 124);
+    Buffer.from('00000000000\0', 'utf8').copy(hdr, 136);
+    hdr.fill(0x20, 148, 156);           // checksum placeholder (spaces)
+    hdr[156] = typeflag.charCodeAt(0);
+    Buffer.from('ustar\0', 'utf8').copy(hdr, 257);
+    Buffer.from('00', 'utf8').copy(hdr, 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += hdr[i];
+    const chkStr = (sum.toString(8)).padStart(6, '0') + '\0 ';
+    Buffer.from(chkStr, 'utf8').copy(hdr, 148);
+    return hdr;
+  }
+  function buildTarEntry(name, contentStr) {
+    const data   = Buffer.from(contentStr, 'utf8');
+    const hdr    = buildTarHeader(name, data.length, '0');
+    const padLen = data.length > 0 ? Math.ceil(data.length / 512) * 512 : 0;
+    const padded = Buffer.alloc(padLen, 0);
+    data.copy(padded);
+    return Buffer.concat([hdr, padded]);
+  }
+  function buildTar(entries) {
+    const parts = entries.map(([n, c]) => buildTarEntry(n, c));
+    const end   = Buffer.alloc(1024, 0); // two zero blocks
+    return toAB(Buffer.concat([...parts, end]));
+  }
+
+  // Test 1: valid archive with CSVs, logs, manifest
+  {
+    const buf = buildTar([
+      ['./doc_01_status.csv',     'SERVER_NAME,VERSION\nSRV1,8.1.27'],
+      ['./collection_log.txt',   'collection started\ncollection complete'],
+      ['./collection_errors.log',''],
+      ['./manifest.txt',         'format=StorageTools-Collection\nformat_version=1\npassed=1\nwarned=0\nfailed=0'],
+    ]);
+    const r = parseTarArchive(buf);
+    if (r.errors.length === 0) ok('TAR: valid archive parsed without errors');
+    else fail(`TAR: valid archive had errors: ${r.errors.join('; ')}`);
+    if (r.files.has('doc_01_status.csv')) ok('TAR: CSV file found by basename');
+    else fail('TAR: CSV file not found by basename');
+    if (r.files.has('collection_log.txt')) ok('TAR: collection_log.txt found');
+    else fail('TAR: collection_log.txt not found');
+    if (r.files.has('collection_errors.log')) ok('TAR: collection_errors.log found (empty)');
+    else fail('TAR: collection_errors.log not found');
+    if (r.files.has('manifest.txt')) ok('TAR: manifest.txt found');
+    else fail('TAR: manifest.txt not found');
+  }
+
+  // Test 2: nested top-level directory (tar -C OUTDIR .)
+  {
+    const buf = buildTar([
+      ['StorageTools_Complete_SRV_20260713/doc_01_status.csv', 'COL\nVAL'],
+      ['StorageTools_Complete_SRV_20260713/manifest.txt',      'format=StorageTools-Collection'],
+    ]);
+    const r = parseTarArchive(buf);
+    if (r.errors.length === 0) ok('TAR: nested top-level directory parsed without errors');
+    else fail(`TAR: nested directory errors: ${r.errors.join('; ')}`);
+    if (r.files.has('doc_01_status.csv')) ok('TAR: CSV found under nested directory');
+    else fail('TAR: CSV not found under nested directory');
+  }
+
+  // Test 3: two zero blocks = proper end of archive
+  {
+    const entry = buildTarEntry('test.csv', 'A,B\n1,2');
+    const zeroes = Buffer.alloc(1024, 0);
+    const trailing = buildTarEntry('should_not_appear.csv', 'X');
+    const buf = toAB(Buffer.concat([entry, zeroes, trailing]));
+    const r = parseTarArchive(buf);
+    if (!r.files.has('should_not_appear.csv')) ok('TAR: entries after two zero blocks are ignored');
+    else fail('TAR: incorrectly parsed entries after two zero blocks');
+  }
+
+  // Test 4: truncated data block rejection
+  {
+    const hdr = buildTarHeader('big.csv', 1024, '0');
+    const shortData = Buffer.alloc(256, 0x41); // only 256 bytes, needs 1024
+    const buf = toAB(Buffer.concat([hdr, shortData]));
+    const r = parseTarArchive(buf);
+    if (r.errors.length > 0) ok('TAR: truncated archive produces error');
+    else fail('TAR: truncated archive should produce error');
+  }
+
+  // Test 5: invalid octal size rejection
+  {
+    const hdr = buildTarHeader('bad.csv', 0, '0');
+    // Overwrite size field with non-octal characters
+    Buffer.from('ZZZZZZZZZZZZ', 'utf8').copy(hdr, 124, 0, 12);
+    const buf = toAB(Buffer.concat([hdr, Buffer.alloc(512, 0), Buffer.alloc(1024, 0)]));
+    const r = parseTarArchive(buf);
+    if (r.errors.length > 0) ok('TAR: invalid octal size produces error');
+    else fail('TAR: invalid octal size should produce error');
+  }
+
+  // Test 6: path traversal rejection
+  {
+    for (const unsafe of ['../escape.csv', '/absolute.csv', 'C:/drive.csv', 'a/../../b.csv']) {
+      const buf = buildTar([[unsafe, 'data']]);
+      const r = parseTarArchive(buf);
+      const baseName = unsafe.split('/').pop().split('\\').pop();
+      if (r.warnings.some(w => w.includes('unsafe'))) ok(`TAR: unsafe path rejected: ${unsafe}`);
+      else if (!r.files.has(baseName)) ok(`TAR: unsafe path not stored: ${unsafe}`);
+      else fail(`TAR: unsafe path should be rejected: ${unsafe}`);
+    }
+  }
+
+  // Test 7: duplicate filenames — first occurrence wins
+  {
+    const buf = buildTar([
+      ['file.csv', 'first'],
+      ['file.csv', 'second'],
+    ]);
+    const r = parseTarArchive(buf);
+    if (r.warnings.some(w => /[Dd]uplicate/.test(w))) ok('TAR: duplicate filename generates warning');
+    else fail('TAR: duplicate filename should generate warning');
+    const data = r.files.get('file.csv');
+    const text = data ? new TextDecoder().decode(data) : '';
+    if (text === 'first') ok('TAR: first occurrence of duplicate used');
+    else fail(`TAR: expected first duplicate to win, got: ${JSON.stringify(text)}`);
+  }
+}
+
+section('15. parseManifest');
+if (typeof parseManifest !== 'function') {
+  fail('parseManifest is not exported');
+} else {
+  const m = parseManifest('format=StorageTools-Collection\nformat_version=1\npassed=20\nwarned=3\nfailed=2\ncustomer=ACME\nserver_label=SRV1');
+  if (m.format === 'StorageTools-Collection') ok('parseManifest: format key');
+  else fail(`parseManifest: expected format=StorageTools-Collection, got ${JSON.stringify(m.format)}`);
+  if (m.passed === '20') ok('parseManifest: passed count');
+  else fail(`parseManifest: expected passed=20, got ${JSON.stringify(m.passed)}`);
+  if (m.customer === 'ACME') ok('parseManifest: customer key');
+  else fail(`parseManifest: expected customer=ACME, got ${JSON.stringify(m.customer)}`);
+}
+
+section('16. XLSX Collection_Log and Collection_Errors sheets');
+if (typeof buildCollectionLogSheet !== 'function' || typeof buildCollectionErrorsSheet !== 'function') {
+  fail('buildCollectionLogSheet / buildCollectionErrorsSheet not exported');
+} else {
+  // Test with no archive state
+  STATE.archive = null;
+  const wb1 = { SheetNames: [], Sheets: {} };
+  const addSheet1 = (ws, name) => { wb1.SheetNames.push(name); wb1.Sheets[name] = ws; };
+  buildCollectionLogSheet({ SheetNames: wb1.SheetNames, Sheets: wb1.Sheets, utils: { book_append_sheet: addSheet1 } });
+  if (wb1.SheetNames.includes('Collection_Log')) ok('XLSX: Collection_Log sheet created with no archive');
+  else fail('XLSX: Collection_Log sheet missing');
+
+  // Test with archive state having log content and empty errors
+  STATE.archive = {
+    filename: 'StorageTools_Complete_SRV_20260713.tar',
+    manifest: { format_version: '1', passed: '5', warned: '1', failed: '0' },
+    collectionLog: 'line 1 of log\nline 2 of log',
+    collectionErrors: '',
+    warnings: [],
+  };
+  const wb2 = { SheetNames: [], Sheets: {} };
+  const appendSheet = (ws, name) => { wb2.SheetNames.push(name); wb2.Sheets[name] = ws; };
+  const mockWb2 = { SheetNames: wb2.SheetNames, Sheets: wb2.Sheets, utils: { book_append_sheet: appendSheet } };
+  buildCollectionLogSheet(mockWb2);
+  buildCollectionErrorsSheet(mockWb2);
+  if (wb2.SheetNames.includes('Collection_Log')) ok('XLSX: Collection_Log sheet created with log content');
+  else fail('XLSX: Collection_Log sheet missing when content present');
+  if (wb2.SheetNames.includes('Collection_Errors')) ok('XLSX: Collection_Errors sheet created');
+  else fail('XLSX: Collection_Errors sheet missing');
+
+  // Verify Collection_Errors shows "No errors recorded" for empty log
+  const errWs = wb2.Sheets['Collection_Errors'];
+  const noErrCell = errWs && errWs['A2'];
+  if (noErrCell && String(noErrCell.v).toLowerCase().includes('no errors')) ok('XLSX: Collection_Errors shows no-errors message for empty log');
+  else fail(`XLSX: Collection_Errors should show no-errors message, got: ${JSON.stringify(noErrCell && noErrCell.v)}`);
+
+  // Sheet names must be valid Excel (<= 31 chars, no invalid chars)
+  for (const name of ['Collection_Log', 'Collection_Errors']) {
+    if (name.length <= 31) ok(`XLSX: ${name} length ≤ 31 chars`);
+    else fail(`XLSX: ${name} too long (${name.length})`);
+    if (!/[\[\]\*\?:\\/]/.test(name)) ok(`XLSX: ${name} has valid Excel characters`);
+    else fail(`XLSX: ${name} contains invalid Excel characters`);
+  }
+
+  // Check generateReport calls both builders
+  if (/buildCollectionLogSheet/.test(js) && /buildCollectionErrorsSheet/.test(js))
+    ok('generateReport calls buildCollectionLogSheet and buildCollectionErrorsSheet');
+  else fail('generateReport missing buildCollectionLogSheet or buildCollectionErrorsSheet call');
+
+  STATE.archive = null; // restore
 }
 
 console.log('\n============================================================');

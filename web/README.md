@@ -1,6 +1,6 @@
 # StorageTools Web Helper — IBM Storage Protect v8 Report Helper
 
-A self-contained, **no-install** browser application that generates one complete IBM Storage Protect `dsmadmc` collection, parses the returned CSV files, and builds one coloured multi-sheet XLSX workbook.
+A self-contained, **no-install** browser application that generates one complete IBM Storage Protect `dsmadmc` collection script, packages all results into a single portable `.tar` archive, and builds one coloured multi-sheet XLSX workbook from that archive.
 
 ---
 
@@ -9,8 +9,8 @@ A self-contained, **no-install** browser application that generates one complete
 | Component | Requirement |
 |-----------|-------------|
 | Browser   | Any modern browser (Chrome, Edge, Firefox). No server needed — open `index.html` directly. |
-| Windows host (optional) | `dsmadmc.exe` from the IBM Storage Protect administrative client package for `.cmd` scripts. |
-| Unix/Linux host (optional) | `dsmadmc` administrative client binary for `.sh` scripts (for example `/opt/tivoli/tsm/client/ba/bin/dsmadmc`). |
+| Windows host (optional) | `dsmadmc.exe` from the IBM Storage Protect administrative client package for `.cmd` scripts; `tar.exe` (included with Windows 10 1803+ and Windows Server 2019+). |
+| Unix/Linux host (optional) | `dsmadmc` administrative client binary for `.sh` scripts (for example `/opt/tivoli/tsm/client/ba/bin/dsmadmc`); `tar` (standard on all POSIX systems). |
 | XLSX export | Built into `index.html` as a self-contained exporter; no CDN, installation, or companion files required. |
 
 ---
@@ -37,13 +37,16 @@ Download exactly one of the unified script types:
 - **Download Complete CMD**
 - **Download Complete SH**
 
-Both formats run the same canonical collection of **76 queries** and use the same CSV output filenames.
+Both formats run the same canonical collection of **76 queries**, package all results into one `.tar` archive, and leave only that archive file on disk.
 
 Generated filenames:
 - `StorageTools_Complete_<SERVER>.cmd`
 - `StorageTools_Complete_<SERVER>.sh`
 
 ### Step 4 — Run the script on a host with the admin client
+
+> **Requirement:** `tar` must be available on the collection host. The script checks for `tar`/`tar.exe` before running and exits with a clear error if it is not found.
+
 #### Windows (`.cmd`)
 Run from **Command Prompt** (not PowerShell):
 ```cmd
@@ -57,10 +60,17 @@ chmod +x StorageTools_Complete_TSMSERVER01.sh
 ./StorageTools_Complete_TSMSERVER01.sh
 ```
 
-Each query writes one `.csv` file into the configured output directory. The script performs a credential/connection preflight before running queries, echoes per-query status in real time, mirrors stderr to `collection_errors.log`, translates IBM return codes, and prints final pass/warn/fail totals.
+Each query writes one `.csv` file into a temporary working directory. The script performs a credential/connection preflight before running queries, echoes per-query status in real time, mirrors stderr to `collection_errors.log`, translates IBM return codes, and prints final pass/warn/fail totals.
+
+On completion the script packages all CSV files, `collection_log.txt`, `collection_errors.log`, and `manifest.txt` into a single `.tar` archive, verifies the archive is valid and non-empty, then removes the working directory. **If archiving fails, the working directory and all individual files are retained for manual recovery.**
+
+Final archive filename:
+- `StorageTools_Complete_<SANITIZED_SERVER>_<UTC_TIMESTAMP>.tar`
 
 ### Step 5 — Import results (Import Results tab)
-Select **all** `.csv` files from the output directory. The app shows one unified import list covering the entire collection.
+Drag-and-drop or select the **single `.tar` collection archive** produced by the script. The app reads all CSV results, the collection log, the error log, and the manifest from the archive and shows a unified import summary.
+
+> **Compatibility fallback:** individual `.csv` files may also be selected if you have a collection from an older script version.
 
 ### Step 6 — Download the complete workbook (Report tab)
 Click **Download Complete XLSX Report**.
@@ -68,24 +78,11 @@ Click **Download Complete XLSX Report**.
 Generated report filename:
 - `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx`
 
-The workbook is one document containing multiple worksheets such as:
-- Index
-- Server
-- Admins
-- Nodes
-- Filespaces
-- Policy
-- Schedules
-- Storage
-- Volumes
-- Occupancy
-- Replication
-- DR
-- Retention
-- Advanced
-- Activity/Health
-- Scripts
-- Schema
+The workbook is one document containing multiple worksheets including:
+- **Index** — summary with archive/manifest metadata, pass/warn/fail counts, and import timestamp
+- **Collection_Log** — `collection_log.txt` line by line
+- **Collection_Errors** — `collection_errors.log` line by line (or a clear "No errors recorded" row)
+- Server, Admins, Nodes, Filespaces, Policy, Schedules, Storage, Volumes, Occupancy, Replication, DR, Retention, Advanced, Activity/Health, Scripts, Schema
 
 ---
 
@@ -112,9 +109,9 @@ Optional feature views can still warn on older or differently licensed servers. 
 
 > ⚠️ **The generated CMD and SH files contain your IBM Storage Protect admin password in plain text.**
 
-1. Delete generated script files and the output folder immediately after importing results.
-2. Do not email, share, or commit generated scripts.
-3. Treat output CSV files as sensitive operational data.
+1. Delete generated script files immediately after the collection run.
+2. Transfer only the `.tar` archive — do not email, share, or commit generated scripts.
+3. Treat the `.tar` archive and its CSV contents as sensitive operational data.
 4. Consider resetting the admin password after the collection run.
 
 ### Passwords with special characters
@@ -141,17 +138,19 @@ Common codes:
 
 For queries explicitly marked as optional feature views, `RC_NOTABLE` is downgraded to **WARN** so older servers can still complete the overall collection.
 
-Primary log files:
-- `StorageTools_Output/collection_log.txt`
-- `StorageTools_Output/collection_errors.log`
+Primary log files (inside the `.tar` archive after collection):
+- `collection_log.txt`
+- `collection_errors.log`
 
 If you see `ANS1051I Invalid user id or password`, correct the admin credentials or the option file/server defaults. The preflight aborts immediately instead of repeating the same failure for every query.
+
+If the archive creation step fails, the script retains all individual files in the working directory and prints its path. You can inspect those files directly or re-run the script.
 
 ---
 
 ## Offline Usage
 
-`web/index.html` is fully self-contained and offline-capable. XLSX generation is implemented directly in the page with no CDN and no companion services.
+`web/index.html` is fully self-contained and offline-capable. XLSX generation and TAR parsing are implemented directly in the page with no CDN and no companion services.
 
 ---
 
@@ -161,13 +160,14 @@ If you see `ANS1051I Invalid user id or password`, correct the admin credentials
 |------|-------------|
 | `StorageTools_Complete_<SERVER>.cmd` | Windows complete collection script (76 queries) |
 | `StorageTools_Complete_<SERVER>.sh` | Unix/Linux complete collection script (76 queries) |
-| `StorageTools_Output/*.csv` | One CSV per query |
-| `StorageTools_Output/collection_log.txt` | Per-query status log with RC translation |
-| `StorageTools_Output/collection_errors.log` | Mirrored stderr with query context |
-| `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Unified workbook |
+| `StorageTools_Complete_<SERVER>_<TIMESTAMP>.tar` | Single portable archive: all CSV results + `collection_log.txt` + `collection_errors.log` + `manifest.txt` |
+| `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Unified workbook including Collection_Log and Collection_Errors sheets |
+
+Individual CSV files and logs are packaged into the `.tar` archive and removed on success. The `.tar` archive is the only collection artifact that should remain after a successful run.
 
 ---
 
 ## Legacy Tool
 
 The original Perl tool `STORAGE_TOOLS_v2.113.pl` remains unchanged in the repository root. This web helper is separate and does not modify the legacy Perl workflow.
+
