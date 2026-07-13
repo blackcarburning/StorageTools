@@ -1,8 +1,6 @@
 # StorageTools Web Helper — IBM Storage Protect v8 Report Helper
 
-A self-contained, **no-install** browser application that generates `dsmadmc` collection
-scripts for IBM Storage Protect (formerly Spectrum Protect / TSM), parses their output, and
-produces a coloured multi-sheet XLSX report.
+A self-contained, **no-install** browser application that generates one complete IBM Storage Protect `dsmadmc` collection, parses the returned CSV files, and builds one coloured multi-sheet XLSX workbook.
 
 ---
 
@@ -24,69 +22,89 @@ Open `web/index.html` in your browser. No web server is required.
 
 ### Step 2 — Configure (Setup tab)
 Fill in:
-- **Windows path to `dsmadmc.exe`** — e.g. `C:\Program Files\Tivoli\TSM\baclient\dsmadmc.exe` (used for `.cmd`)
-- **Unix/Linux path to `dsmadmc`** — e.g. `/opt/tivoli/tsm/client/ba/bin/dsmadmc` (used for `.sh`)
-- **Admin User ID** and **Password** — a Spectrum Protect admin with at least `ANALYST` privilege
-- **Option file path** — optional, leave blank if the server is reached without an options file
-- **Server name / label** — used to name output files only; **does not select the target server**. The target server is determined by the configured option file (or the administrative client's default options). For example, entering `192.168.1.81` here does not direct `dsmadmc` to that address — only the option file (or the client's built-in default) controls which server is contacted.
+- **Windows path to `dsmadmc.exe`** — used for `.cmd`
+- **Unix/Linux path to `dsmadmc`** — used for `.sh`
+- **Admin User ID** and **Password** — a Storage Protect admin with at least `ANALYST` privilege
+- **Windows / Unix option file path** — optional, leave blank if the client defaults already select the target server
+- **Server name / label** — used to name output files only; **does not select the target server**. The target server is selected by the option file or by the administrative client's default options.
 - **Customer name** — included in report headers
-- **Output directory/path** — where collection CSVs are written by either script type (default: `StorageTools_Output`)
+- **Windows / Unix output directory** — where the generated scripts write CSV output (default: `StorageTools_Output`)
 
-Click **Save to Browser** to persist settings between sessions (password is never saved).
+Click **Save to Browser** to persist settings between sessions (the password is never saved).
 
-### Step 3 — Download collection scripts (Generate Scripts tab)
-Click one or more of:
-- **Download Documentation CMD**
-- **Download Healthcheck CMD**
-- **Download Documentation SH**
-- **Download Healthcheck SH**
+### Step 3 — Download the complete collection script (Generate Scripts tab)
+Download exactly one of the unified script types:
+- **Download Complete CMD**
+- **Download Complete SH**
 
-Generated file names:
-- `StorageTools_Documentation_<SERVER>.cmd` — SQL SELECT queries covering full server configuration (see `DOC_QUERIES` in `index.html` for the full list)
-- `StorageTools_Healthcheck_<SERVER>.cmd` — SQL SELECT queries covering operational health (see `HEALTH_QUERIES` in `index.html` for the full list)
-- `StorageTools_Documentation_<SERVER>.sh` — same query set/output filenames as the documentation CMD script
-- `StorageTools_Healthcheck_<SERVER>.sh` — same query set/output filenames as the healthcheck CMD script
+Both formats run the same canonical collection of **76 queries** and use the same CSV output filenames.
 
-### Step 4 — Run scripts on the target host
-Copy the generated script(s) to a host that has the administrative client installed.
+Generated filenames:
+- `StorageTools_Complete_<SERVER>.cmd`
+- `StorageTools_Complete_<SERVER>.sh`
 
+### Step 4 — Run the script on a host with the admin client
 #### Windows (`.cmd`)
-Run on a Windows server or workstation that has `dsmadmc.exe`.
-
-Run from a **Command Prompt** (not PowerShell):
+Run from **Command Prompt** (not PowerShell):
 ```cmd
-StorageTools_Documentation_TSMSERVER01.cmd
+StorageTools_Complete_TSMSERVER01.cmd
 ```
 
 #### Unix/Linux (`.sh`)
-Run on a Unix/Linux host with `dsmadmc` available:
+Run from a POSIX shell:
 ```sh
-chmod +x StorageTools_Documentation_TSMSERVER01.sh
-./StorageTools_Documentation_TSMSERVER01.sh
+chmod +x StorageTools_Complete_TSMSERVER01.sh
+./StorageTools_Complete_TSMSERVER01.sh
 ```
 
-Each query creates one `.csv` file in the configured output directory/path.
-Errors are written to `collection_errors.log` — query failures do **not** stop the batch.
-
-> **Tip:** Run as a user with filesystem access to the configured client executable and
-> network access to the IBM Storage Protect server.
+Each query writes one `.csv` file into the configured output directory. The script performs a credential/connection preflight before running queries, echoes per-query status in real time, mirrors stderr to `collection_errors.log`, translates IBM return codes, and prints final pass/warn/fail totals.
 
 ### Step 5 — Import results (Import Results tab)
-Return to the web app. On the **Import Results** tab:
-1. Click the file-drop area (or drag-and-drop) and select **all** `.csv` files from the
-   `StorageTools_Output` folder.
-2. The status table updates immediately, showing:
-   - ✅ **Imported** — file present with data rows
-   - ⚠️ **No rows** — file imported but query returned no results (normal for empty tables)
-   - ⬜ **Not imported** — file not yet selected
+Select **all** `.csv` files from the output directory. The app shows one unified import list covering the entire collection.
 
-### Step 6 — Generate report (Report tab)
-Click **Download XLSX Report**. A coloured workbook is saved with:
-- **Index** sheet: import status and row counts for all queries
-- **14 documentation sheets**: Server, Admins, Nodes, Filespaces, Policy, Schedules, Storage,
-  Volumes, Occupancy, Replication, DR, Advanced\_v8, Scripts, Schema
-- **6 healthcheck sheets**: HC\_Database, HC\_Storage, HC\_Schedules, HC\_Nodes,
-  HC\_Activity, HC\_Advanced
+### Step 6 — Download the complete workbook (Report tab)
+Click **Download Complete XLSX Report**.
+
+Generated report filename:
+- `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx`
+
+The workbook is one document containing multiple worksheets such as:
+- Index
+- Server
+- Admins
+- Nodes
+- Filespaces
+- Policy
+- Schedules
+- Storage
+- Volumes
+- Occupancy
+- Replication
+- DR
+- Retention
+- Advanced
+- Activity/Health
+- Scripts
+- Schema
+
+---
+
+## Coverage Highlights
+
+The unified collection includes:
+- core server, database, log, admin, node, filespace, policy, schedule, storage, volume, occupancy, DR, script, and schema-discovery queries
+- replication coverage including `SERVERS`, `REPLSERVERS`, and exact-schema `STGRULES`
+- retention coverage including exact-schema `RETSETS`, `RETRULES`, and `HOLDS`
+- low-cost health checks for schedules, nodes, activity log, storage, sessions, processes, retention-set state/statistics, and retention expiration ordering
+
+The real-server schema-backed advanced queries use the confirmed table names:
+- `STGRULES`
+- `RETSETS`
+- `RETRULES`
+- `REPLSERVERS`
+- retention helper views surfaced via schema discovery such as `RETSETCONTENTS`, `RETSET_MEMBERS`, `RETSET_VOLUMES`, `RETRULE_MEMBERS`, `HOLDS`, `HELDRETSETS`, and `RETMEDIA`
+
+Optional feature views can still warn on older or differently licensed servers. Confirmed views on the attached schema are queried with their exact names and should not return `RC_NOTABLE` on that server family.
 
 ---
 
@@ -94,67 +112,46 @@ Click **Download XLSX Report**. A coloured workbook is saved with:
 
 > ⚠️ **The generated CMD and SH files contain your IBM Storage Protect admin password in plain text.**
 
-1. **Delete script files and the output folder immediately** after importing results into the app.
-2. Do not email, store in shared drives, or commit generated scripts to source control.
-3. Do not share output CSV files unless you are sure they contain no sensitive data.
-4. Consider resetting the admin account password after the collection run.
-5. On Windows, command-line passwords may be visible to local process inspection tools
-   (Task Manager, Sysinternals Process Explorer, endpoint monitoring agents).
-6. On Unix/Linux, command-line arguments may be visible to local users while the query command runs (for example via `ps`).
+1. Delete generated script files and the output folder immediately after importing results.
+2. Do not email, share, or commit generated scripts.
+3. Treat output CSV files as sensitive operational data.
+4. Consider resetting the admin password after the collection run.
 
 ### Passwords with special characters
-If your password contains any of: `! ^ & | < > %`
-
-- `%` — double it to `%%` in the `SET "ADMPA=..."` line (CMD escaping)
-- `!` — avoid if `EnableDelayedExpansion` is used; the generated scripts do **not** use it,
-  so `!` in passwords is generally safe with standard `setlocal`
-- `^`, `&`, `|`, `<`, `>` — may require prefixing with `^` in CMD variable values
-
-For complex passwords, consider using an option file with the password stored via
-IBM Storage Protect client options instead of command-line flags.
-
-### IBM documentation reference
-The script options are based on IBM Storage Protect administrative client usage (`dsmadmc` with options such as `-commadelimited`, `-id`, `-pa`, and `-optfile`):
-
-- IBM Storage Protect docs: <https://www.ibm.com/docs/en/storage-protect/8.1.27?topic=servers-server-commands-options-utilities>
+If your password contains any of `! ^ & | < > %`:
+- `%` — double it to `%%` in CMD variable values
+- `^`, `&`, `|`, `<`, `>` — may require CMD escaping depending on the local shell environment
 
 ---
 
-## SQL Version Compatibility
+## Return-code translation and troubleshooting
 
-All SELECT statements target **IBM Storage Protect v8.1.x** (DB2-based SQL engine).
+Both generated scripts translate IBM Storage Protect return codes and show the symbolic name in the console and `collection_log.txt`.
 
-Key v8 SQL practices used:
-- `DISTINCT` keyword instead of the deprecated `unique()` aggregate
-- `FLOAT(col)` for safe numeric division (avoids integer truncation)
-- `NULLIF(col, 0)` guards on all percentage divisions to prevent divide-by-zero errors
-- `DECIMAL(n,m)` casts for all computed GB/percentage values
-- `CURRENT_TIMESTAMP - N DAYS/HOURS` for timestamp arithmetic
-- `SUBSTR(CHAR(timestamp), 1, 19)` for safe datetime formatting
-- `INNER JOIN` syntax for multi-table queries
-- `UPPER(column)` on status comparisons for case-insensitive matching
+Common codes:
 
-Queries marked **[v8 only]** target tables introduced in SP v8:
-- `CONTAINERS` — directory/cloud container pool objects
-- `REPLICATIONRULES` — v8 replication rule definitions
-- `STGRULES` — storage rules (v8.1.8+); queried with `TYPE` column per IBM docs
-- `RETENTIONSETS` — retention set definitions (v8.1.4+)
-- v8-extended columns on `STGPOOLS` (cloud storage columns)
+| RC | Symbol | Severity | Meaning |
+|----|--------|----------|---------|
+| 0 | `RC_OK` | OK | Command completed successfully |
+| 3 | `RC_SYNTAX` | FAILED | Invalid SQL/command syntax, wrong columns, or bad parameters |
+| 11 | `RC_NOTFOUND` | WARN | Query ran successfully but returned no rows |
+| 28 | `RC_NOTABLE` | FAILED by default | Referenced table/view does not exist |
+| 35 | `RC_CANCELED` | WARN | Command cancelled |
+| 137 | `DSM_RC_AUTH_FAILURE` | FAILED | Authentication failure |
 
-Version-sensitive views (`STGRULES`, `CONTAINERS`, `RETENTIONSETS`, `SERVERS`) are queried
-with `SELECT *` where the full column list cannot be established across all 8.1.x fix packs.
-Schema discovery queries (`doc_40`, `doc_41`) use `SYSCAT.TABLES` / `SYSCAT.COLUMNS` so you
-can inspect the actual columns available on your specific server.
+For queries explicitly marked as optional feature views, `RC_NOTABLE` is downgraded to **WARN** so older servers can still complete the overall collection.
 
-These queries may **fail on older servers**; the error output is now displayed on the console
-in real time and also appended to `collection_errors.log` with query ID and timestamp context.
+Primary log files:
+- `StorageTools_Output/collection_log.txt`
+- `StorageTools_Output/collection_errors.log`
+
+If you see `ANS1051I Invalid user id or password`, correct the admin credentials or the option file/server defaults. The preflight aborts immediately instead of repeating the same failure for every query.
 
 ---
 
 ## Offline Usage
 
-`web/index.html` is fully self-contained. XLSX generation is implemented directly in the
-page, so report downloads work offline with no CDN access and no extra files.
+`web/index.html` is fully self-contained and offline-capable. XLSX generation is implemented directly in the page with no CDN and no companion services.
 
 ---
 
@@ -162,87 +159,15 @@ page, so report downloads work offline with no CDN access and no extra files.
 
 | File | Description |
 |------|-------------|
-| `StorageTools_Documentation_<SERVER>.cmd` | Windows batch — documentation collection (41 queries) |
-| `StorageTools_Healthcheck_<SERVER>.cmd`   | Windows batch — healthcheck collection (31 queries) |
-| `StorageTools_Documentation_<SERVER>.sh` | Unix/Linux shell — documentation collection (41 queries, same CSV filenames/output format as CMD) |
-| `StorageTools_Healthcheck_<SERVER>.sh`   | Unix/Linux shell — healthcheck collection (31 queries, same CSV filenames/output format as CMD) |
-| `StorageTools_Output\doc_01_status.csv`   | One CSV per documentation query |
-| `StorageTools_Output\hc_01_db_space.csv`  | One CSV per healthcheck query |
-| `StorageTools_Output\collection_log.txt`  | Per-query [OK]/[WARN]/[FAILED] status with timestamps |
-| `StorageTools_Output\collection_errors.log` | Query stderr output with query ID/title/timestamp context |
-| `StorageTools_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Final coloured XLSX report |
+| `StorageTools_Complete_<SERVER>.cmd` | Windows complete collection script (76 queries) |
+| `StorageTools_Complete_<SERVER>.sh` | Unix/Linux complete collection script (76 queries) |
+| `StorageTools_Output/*.csv` | One CSV per query |
+| `StorageTools_Output/collection_log.txt` | Per-query status log with RC translation |
+| `StorageTools_Output/collection_errors.log` | Mirrored stderr with query context |
+| `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Unified workbook |
 
 ---
 
 ## Legacy Tool
 
-The original Perl tool `STORAGE_TOOLS_v2.113.pl` remains unchanged in the repository root (`/STORAGE_TOOLS_v2.113.pl`).
-This web helper is an independent addition and does not modify or replace the Perl tool.
-
----
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| CMD file opens and closes instantly | Right-click → Run as Administrator, or run from Command Prompt |
-| `dsmadmc.exe` not found | Verify the full path in Setup; use `dir "C:\...\dsmadmc.exe"` to confirm |
-| `./script.sh: not found` or permission denied | Verify Unix client path, then run `chmod +x script.sh` and execute from a POSIX shell |
-| All output files empty | Check `collection_errors.log`; verify admin credentials and server connectivity |
-| XLSX download button does nothing | Confirm your browser allows downloads from local files and review the browser console for any client-side errors |
-| v8-only queries fail | Expected on SP v7 and earlier; the error text is now echoed to the console in real time and appended with context to `collection_errors.log`. Core queries still succeed. |
-| Password with `%` breaks CMD | Double the `%` character in the `SET "ADMPA=..."` line of the CMD file |
-| `ANS1051I Invalid user id or password` | Verify the Admin User ID and password. On Unix/Linux, also verify that the option file (`-optfile`) points at the intended server — the **Server Name / Label** field in the tool is only a label and does not direct `dsmadmc` to any address. The generated script now runs a connection preflight before all queries and aborts immediately rather than repeating the same failure for every query. |
-| Query shows `[WARN]` status | Either: (a) the dsmadmc return code was 0 but text appeared on stderr — review `collection_errors.log`; or (b) the return code was 11 (`RC_NOTFOUND` — empty result set) or 35 (`RC_CANCELED`) which IBM documents as warnings. See **Return-code translation** below. |
-| Query shows `[FAILED]` status | The dsmadmc return code was non-zero (and not a warning code); the stderr output appears on the console immediately and in `collection_errors.log` with the query ID and timestamp. The return code is now translated to a symbolic name — see **Return-code translation** below. |
-| Schema queries (doc\_40, doc\_41) return no rows | `SYSCAT.TABLES`/`SYSCAT.COLUMNS` may require additional DB2 privileges; ask your DBA to `GRANT SELECT ON SYSCAT.TABLES TO <admin>` |
-
----
-
-## Return-code translation
-
-Each generated script (both `.sh` and `.cmd`) contains a built-in subroutine (`rc_info` / `:RCInfo`) that maps every dsmadmc numeric return code to its IBM-documented symbolic name and a short description. The translated code and description appear in **both the terminal output and `collection_log.txt`**.
-
-### Example output
-
-```
-[FAILED] Database Information (rc=3 RC_SYNTAX -- invalid command/SQL syntax or parameters)
-[WARN]   Libraries           (rc=11 RC_NOTFOUND -- no matching rows/objects)
-[FAILED] Replication Rules   (rc=28 RC_NOTABLE -- unknown SQL table or view)
-[FAILED] Server Status       (rc=137 DSM_RC_AUTH_FAILURE -- authentication failed)
-```
-
-### Key return codes and their meaning
-
-| RC | Symbol | Severity | Meaning |
-|----|--------|----------|---------|
-| 0 | `RC_OK` | OK | Command completed successfully |
-| 3 | `RC_SYNTAX` | FAILED | Command/SQL syntax error, an invalid or missing column, or invalid command parameters. Consult `collection_errors.log` for the full ANS message identifying the offending token. Possible causes: invalid column name in the SELECT list, invalid ORDER BY reference, or a command keyword not supported on this server level. |
-| 11 | `RC_NOTFOUND` | **WARN** | QUERY/SELECT returned no matching rows. This is normal for an empty table (e.g. no tape libraries, no DRM media). rc=11 does **not** count as a failure; the query ran successfully but found nothing to report. |
-| 28 | `RC_NOTABLE` | FAILED | The SQL view or table referenced in the query does not exist on this server. This typically means the feature (e.g. Retention Sets, Replication Rules) is not available on the installed server version. Check `collection_errors.log` for the view name, then confirm the minimum supported server version. |
-| 35 | `RC_CANCELED` | **WARN** | Command was cancelled (e.g. by a running process holding a lock). Not a permanent error. |
-| 137 | `DSM_RC_AUTH_FAILURE` | FAILED | Authentication failure — invalid admin ID or password. The script aborts immediately; check credentials and the option file path. |
-| other | `RC_UNKNOWN_VALUE` | FAILED | An undocumented or unexpected return code. Inspect `collection_errors.log` for ANS messages from that query run. |
-
-### Notes on rc=3
-
-rc=3 (`RC_SYNTAX`) nearly always means one of:
-
-1. **A column name does not exist in the view** — e.g. `TCP_NAME` was removed in a later IBM SP version; use `TCP_ADDRESS` instead.
-2. **A column is missing from the server's installed level** — e.g. `SESSIONSECURITY` requires SP v8.1.2+; `CLOUDTYPE` requires SP v8.1.3+.
-3. **A SQL operator is malformed** — e.g. `CURRENT_TIMESTAMP-30 DAYS` (missing spaces) is a DB2 parse error; use `CURRENT_TIMESTAMP - 30 DAYS`.
-
-The detailed ANS message in `collection_errors.log` will identify the token causing the error.
-
-### Notes on rc=28
-
-rc=28 (`RC_NOTABLE`) means the view/table does not exist on the connected server.  The two most common cases in the generated script are:
-
-- **Replication Rules** — present only if Replication has been configured.
-- **Retention Sets** — added in SP v8.1.4; not available on earlier servers.
-
-These failures are expected on plain-vanilla SP installations and do not indicate a script defect. The affected queries are annotated in the generated script with a version note.
-
-### Primary diagnosis tool
-
-All dsmadmc stderr messages are mirrored to the terminal at runtime **and** persisted in `collection_errors.log` with the query ID and timestamp. For any non-zero return code this file is the primary source of diagnostic information.
+The original Perl tool `STORAGE_TOOLS_v2.113.pl` remains unchanged in the repository root. This web helper is separate and does not modify the legacy Perl workflow.
