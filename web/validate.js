@@ -46,7 +46,8 @@ let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatS
     parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet,
     XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
     sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
-    parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue;
+    parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue,
+    deriveExpectedColumnsFromSql, buildImportedState;
 try {
   const elements = new Map();
   const makeEl = (value = '') => ({
@@ -99,7 +100,7 @@ try {
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
     'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue };`
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState };`
   );
   const result = sandbox(
     mockDoc,
@@ -117,7 +118,8 @@ try {
      parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX,
      buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
      sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
-     parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue } = result);
+     parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue,
+     deriveExpectedColumnsFromSql, buildImportedState } = result);
 } catch (err) {
   fail(`Could not evaluate index.html script: ${err.message}`);
   process.exit(1);
@@ -846,9 +848,12 @@ section('21. parseDsmOutput — banner filtering and header detection');
 if (typeof parseDsmOutput !== 'function') {
   fail('parseDsmOutput is not exported');
 } else {
+  const shortStatusHeader = { columns: ['SERVER_NAME', 'VERSION'] };
+  const statusQuery = ALL_QUERIES.find(q => q.id === 'doc_01_status');
+
   // Standard CSV with no banner
   const plain = 'SERVER_NAME,VERSION\nSRV1,8.1.27\n1 row(s) affected.';
-  const r1 = parseDsmOutput(plain);
+  const r1 = parseDsmOutput(plain, shortStatusHeader);
   if (r1.headers.join(',') === 'SERVER_NAME,VERSION') ok('parseDsmOutput: plain CSV header detected');
   else fail(`parseDsmOutput: plain CSV headers wrong: ${JSON.stringify(r1.headers)}`);
   if (r1.rows.length === 1 && r1.rows[0][0] === 'SRV1') ok('parseDsmOutput: plain CSV data row parsed');
@@ -864,7 +869,7 @@ if (typeof parseDsmOutput !== 'function') {
     'SRV1,8.1.27',
     '1 row(s) affected.',
   ].join('\n');
-  const r2 = parseDsmOutput(bannerText);
+  const r2 = parseDsmOutput(bannerText, shortStatusHeader);
   if (r2.headers.join(',') === 'SERVER_NAME,VERSION') ok('parseDsmOutput: banner filtered; CSV header detected');
   else fail(`parseDsmOutput: banner not filtered; headers: ${JSON.stringify(r2.headers)}`);
   if (r2.rows.length === 1 && r2.rows[0][0] === 'SRV1') ok('parseDsmOutput: data rows correct after banner filtering');
@@ -879,16 +884,28 @@ if (typeof parseDsmOutput !== 'function') {
     'A,B',
     'x,y',
   ].join('\n');
-  const r3 = parseDsmOutput(bannerSpaces);
+  const r3 = parseDsmOutput(bannerSpaces, { columns: ['A', 'B'] });
   if (r3.headers.join(',') === 'A,B') ok('parseDsmOutput: banner variant with spaces/mixed case filtered');
   else fail(`parseDsmOutput: banner variant not filtered; headers: ${JSON.stringify(r3.headers)}`);
+
+  const bannerVariants = [
+    '\ufeff\x01Command Line Administrative Interface - Version 8\tRelease 1\tLevel 27.0\n(c) Copyright IBM Corp. 1990\t2025\nServer Version 8\tRelease 1\tLevel 27.000\nServer date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14\nA,B\nx,y',
+    '"Command Line Administrative Interface - Version 8","Release 1","Level 27.0"\n"(c) Copyright IBM Corp. 1990","2025"\n"Server Version 8","Release 1","Level 27.000"\n"Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14"\nA,B\nx,y',
+    '  Command Line Administrative Interface - Version 8   Release 1   Level 27.0  \n  (c) Copyright IBM Corp. 1990   2025  \n  Server Version 8   Release 1   Level 27.000  \n  Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14  \nA,B\nx,y',
+  ];
+  const variantsOk = bannerVariants.every(text => {
+    const parsed = parseDsmOutput(text, { columns: ['A', 'B'] });
+    return parsed.headers.join(',') === 'A,B' && parsed.rows.length === 1 && parsed.rows[0][0] === 'x';
+  });
+  if (variantsOk) ok('parseDsmOutput: tab/comma/quoted/BOM/control banner variants filtered');
+  else fail('parseDsmOutput: one or more banner variants still leaked into rows');
 
   // Ensure "Server Version" in a data column is NOT filtered
   const withServerVer = [
     'SERVER_NAME,SERVER_VERSION',
     'SRV1,Server Version 8.1',
   ].join('\n');
-  const r4 = parseDsmOutput(withServerVer);
+  const r4 = parseDsmOutput(withServerVer, { columns: ['SERVER_NAME', 'SERVER_VERSION'] });
   if (r4.headers[0] === 'SERVER_NAME') ok('parseDsmOutput: "Server Version" in data column is not filtered');
   else fail(`parseDsmOutput: incorrectly filtered row with "Server Version" in data: ${JSON.stringify(r4)}`);
 
@@ -902,14 +919,80 @@ if (typeof parseDsmOutput !== 'function') {
   if (r5.headers[0] === 'NODE_NAME') ok('parseDsmOutput: IBM product line still filtered');
   else fail(`parseDsmOutput: IBM product line filter broken: ${JSON.stringify(r5.headers)}`);
 
+  const noHeader = [
+    'Command Line Administrative Interface - Version 8\tRelease 1\tLevel 27.0',
+    '(c) Copyright IBM Corp. 1990\t2025',
+    'Server Version 8\tRelease 1\tLevel 27.000',
+    'Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14',
+    'SRV1,10.10.10.10,1500,TCPIP,8,1,27,0,2026-07-01,90,8,30,COMPLIANT,200,80,ONLINE,OFF,YES,NO,15',
+    '1 row(s) affected.',
+  ].join('\n');
+  const r6 = parseDsmOutput(noHeader, statusQuery);
+  if (r6.headers[0] === 'SERVER_NAME' && r6.rows.length === 1 && r6.rows[0][0] === 'SRV1') ok('parseDsmOutput: first genuine data row remains data when server emits no header');
+  else fail(`parseDsmOutput: first data row was not preserved correctly: ${JSON.stringify(r6)}`);
+
+  const mismatch = 'WRONG_A,WRONG_B,WRONG_C\n1,2,3';
+  const r7 = parseDsmOutput(mismatch, { columns: ['COL_A', 'COL_B'] });
+  if (r7.headers.join(',') === 'COL_A,COL_B' && r7.rows[0][0] === 'WRONG_A') ok('parseDsmOutput: mismatched first row retained as data');
+  else fail(`parseDsmOutput: mismatched first row should remain data, got ${JSON.stringify(r7)}`);
+
+  if (typeof buildImportedState === 'function') {
+    const imported = buildImportedState({
+      'doc_41_syscat_key_cols.csv': [
+        'TABNAME,COLNO,COLNAME,TYPENAME',
+        'DBSPACE,0,VOLUME_NAME,VARCHAR',
+        'DBSPACE,1,DBSPACE_NUM,INTEGER',
+        'DBSPACE,2,FILE_SYSTEM,VARCHAR',
+      ].join('\n'),
+      'doc_03_dbspace.csv': [
+        'Command Line Administrative Interface - Version 8\tRelease 1\tLevel 27.0',
+        '(c) Copyright IBM Corp. 1990\t2025',
+        'Server Version 8\tRelease 1\tLevel 27.000',
+        'Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14',
+        'VOL001,0,/tsm/db01',
+      ].join('\n'),
+    });
+    const dbspace = imported['doc_03_dbspace.csv'];
+    if (dbspace && dbspace.headers.join(',') === 'VOLUME_NAME,DBSPACE_NUM,FILE_SYSTEM' && dbspace.rows[0][0] === 'VOL001') ok('buildImportedState: SELECT * query uses schema metadata without losing data row');
+    else fail(`buildImportedState: schema-backed SELECT * headers failed: ${JSON.stringify(dbspace)}`);
+  } else {
+    fail('buildImportedState is not exported');
+  }
+
   // Empty input
-  const r6 = parseDsmOutput('');
-  if (r6.headers.length === 0 && r6.rows.length === 0) ok('parseDsmOutput: empty input returns empty result');
-  else fail(`parseDsmOutput: empty input should return empty, got ${JSON.stringify(r6)}`);
+  const r8 = parseDsmOutput('');
+  if (r8.headers.length === 0 && r8.rows.length === 0) ok('parseDsmOutput: empty input returns empty result');
+  else fail(`parseDsmOutput: empty input should return empty, got ${JSON.stringify(r8)}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('22. Left-alignment in generated XLSX styles');
+section('22. SELECT projection parsing and query metadata');
+if (typeof deriveExpectedColumnsFromSql !== 'function') {
+  fail('deriveExpectedColumnsFromSql is not exported');
+} else {
+  const simple = deriveExpectedColumnsFromSql('SELECT A,B,C FROM T');
+  if (simple.join(',') === 'A,B,C') ok('deriveExpectedColumnsFromSql: simple columns preserve order');
+  else fail(`deriveExpectedColumnsFromSql: simple projection failed: ${JSON.stringify(simple)}`);
+
+  const complex = deriveExpectedColumnsFromSql("SELECT N.NODE_NAME, COUNT(*) AS NODE_COUNT, CASE WHEN STATUS IN ('A,B','C') THEN 'x' ELSE 'y' END AS STATUS_FLAG, COALESCE(TRIM(DESCR), 'x,y') LABEL, CHAR(CURRENT_TIMESTAMP) FROM NODES N");
+  if (complex[0] === 'NODE_NAME' && complex[1] === 'NODE_COUNT' && complex[2] === 'STATUS_FLAG' && complex[3] === 'LABEL' && typeof complex[4] === 'string' && complex[4].length > 0) ok('deriveExpectedColumnsFromSql: aliases, strings, functions, CASE, and expression labels parsed');
+  else fail(`deriveExpectedColumnsFromSql: complex projection failed: ${JSON.stringify(complex)}`);
+
+  const distinct = deriveExpectedColumnsFromSql('SELECT DISTINCT NODE_NAME FROM FILESPACES');
+  if (distinct.join(',') === 'NODE_NAME') ok('deriveExpectedColumnsFromSql: DISTINCT simple column handled');
+  else fail(`deriveExpectedColumnsFromSql: DISTINCT failed: ${JSON.stringify(distinct)}`);
+
+  const star = deriveExpectedColumnsFromSql('SELECT * FROM DBSPACE', { DBSPACE: ['VOLUME_NAME', 'DBSPACE_NUM'] });
+  if (star.join(',') === 'VOLUME_NAME,DBSPACE_NUM') ok('deriveExpectedColumnsFromSql: SELECT * uses supplied schema metadata');
+  else fail(`deriveExpectedColumnsFromSql: SELECT * schema handling failed: ${JSON.stringify(star)}`);
+
+  const allDerived = ALL_QUERIES.filter(q => !Array.isArray(q.columns) || q.columns.length === 0);
+  if (allDerived.length === 0) ok('ALL_QUERIES now has expected columns for every canonical query');
+  else fail(`Queries still missing expected columns: ${allDerived.map(q => q.id).join(', ')}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('23. Left-alignment in generated XLSX styles');
 if (typeof XLSX === 'undefined') {
   fail('XLSX not available for alignment tests');
 } else {
@@ -957,7 +1040,7 @@ if (typeof XLSX === 'undefined') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('23. Column header fallback and row/header length safety');
+section('24. Column header fallback and row/header length safety');
 if (typeof addQueryBlock !== 'function') {
   fail('addQueryBlock is not exported');
 } else {
@@ -1009,6 +1092,8 @@ if (typeof addQueryBlock !== 'function') {
     headers: ['H1'],
     rows: [['v1', 'v2', 'v3']], // 3 values, header has 1
   });
+  if (ws4['B2'] && ws4['B2'].v === 'EXTRA_1' && ws4['C2'] && ws4['C2'].v === 'EXTRA_2') ok('addQueryBlock: extra fields receive deterministic EXTRA_* headers');
+  else fail(`addQueryBlock: expected EXTRA_* headers at B2/C2, got ${JSON.stringify(ws4['B2'])} / ${JSON.stringify(ws4['C2'])}`);
   // Extra values in B3, C3 should be written
   if (ws4['B3'] && ws4['B3'].v === 'v2') ok('addQueryBlock: extra fields beyond header written to worksheet');
   else fail(`addQueryBlock: expected v2 at B3, got ${JSON.stringify(ws4['B3'] && ws4['B3'].v)}`);
@@ -1024,10 +1109,27 @@ if (typeof addQueryBlock !== 'function') {
   addQueryBlock(ws5, 0, q5, { headers: ['REAL_A', 'REAL_B'], rows: [] });
   if (ws5['A2'] && ws5['A2'].v === 'REAL_A') ok('addQueryBlock: imported headers take priority over query.columns');
   else fail(`addQueryBlock: imported headers should win, got ${JSON.stringify(ws5['A2'] && ws5['A2'].v)}`);
+
+  // 6. Fixture worksheet should have nonblank headers and no banner text
+  const serverQuery = ALL_QUERIES.find(q => q.id === 'doc_01_status');
+  const ws6 = makeWs();
+  const parsedFixture = parseDsmOutput([
+    'Command Line Administrative Interface - Version 8\tRelease 1\tLevel 27.0',
+    '(c) Copyright IBM Corp. 1990\t2025',
+    'Server Version 8\tRelease 1\tLevel 27.000',
+    'Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14',
+    'SRV1,10.10.10.10,1500,TCPIP,8,1,27,0,2026-07-01,90,8,30,COMPLIANT,200,80,ONLINE,OFF,YES,NO,15',
+  ].join('\n'), serverQuery);
+  addQueryBlock(ws6, 0, serverQuery, parsedFixture);
+  if (ws6['A2'] && ws6['A2'].v && ws6['B2'] && ws6['B2'].v) ok('addQueryBlock: fixture worksheet has a nonblank header row');
+  else fail(`addQueryBlock: fixture worksheet header row blank: ${JSON.stringify(ws6)}`);
+  const leakedBanner = Object.values(ws6).some(cell => cell && cell.v && /Command Line Administrative Interface|Server Version 8|Copyright IBM/i.test(String(cell.v)));
+  if (!leakedBanner) ok('addQueryBlock: fixture worksheet contains no client/version banner text');
+  else fail('addQueryBlock: banner text leaked into fixture worksheet cells');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('24. README troubleshooting notes for sanitization and banner filtering');
+section('25. README troubleshooting notes for sanitization and banner filtering');
 if (readme.includes('control character') || readme.includes('XML') || readme.includes('illegal')) {
   ok('README includes troubleshooting note for XML/control-character issues');
 } else {
@@ -1040,7 +1142,7 @@ if (readme.includes('banner') || readme.includes('administrative-client') || rea
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('25. Windows CMD path correctness (backslash escaping)');
+section('26. Windows CMD path correctness (backslash escaping)');
 {
   // All four critical Windows paths must be present with correct separator
   const goodPaths = [
@@ -1067,7 +1169,7 @@ section('25. Windows CMD path correctness (backslash escaping)');
   }
 }
 
-section('26. Windows CMD ANS1051 authentication detection (no stale ERRORLEVEL)');
+section('27. Windows CMD ANS1051 authentication detection (no stale ERRORLEVEL)');
 {
   // Must NOT use stale ERRORLEVEL pattern
   if (!cmd.includes('IF %ERRORLEVEL%==0 SET ANS1051_FATAL=1')) {
@@ -1098,7 +1200,7 @@ section('26. Windows CMD ANS1051 authentication detection (no stale ERRORLEVEL)'
   }
 }
 
-section('27. Windows CMD dsmadmc invocation (credentials and optfile)');
+section('28. Windows CMD dsmadmc invocation (credentials and optfile)');
 {
   // Credentials must be quoted in every invocation
   if (cmd.includes('-id="%ADMID%"') && cmd.includes('-pa="%ADMPA%"')) {
@@ -1123,7 +1225,7 @@ section('27. Windows CMD dsmadmc invocation (credentials and optfile)');
   }
 }
 
-section('28. Windows CMD: no non-ASCII dash punctuation in generated text');
+section('29. Windows CMD: no non-ASCII dash punctuation in generated text');
 {
   const emDash = '\u2014';
   const enDash = '\u2013';
@@ -1147,7 +1249,7 @@ section('28. Windows CMD: no non-ASCII dash punctuation in generated text');
   }
 }
 
-section('29. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FINDSTR/DEL');
+section('30. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FINDSTR/DEL');
 {
   const qerrPath = '"%OUTDIR%\\qerr.tmp"';
   const count = cmd.split(qerrPath).length - 1;
@@ -1159,7 +1261,7 @@ section('29. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FIN
   }
 }
 
-section('30. Windows CMD title-safe stderr/auth flow uses subroutine (no block interpolation)');
+section('31. Windows CMD title-safe stderr/auth flow uses subroutine (no block interpolation)');
 {
   const inlineLiteralLabelRegex = /echo --- Stderr for \[[0-9]+\/[0-9]+\]/;
 
@@ -1194,7 +1296,7 @@ section('30. Windows CMD title-safe stderr/auth flow uses subroutine (no block i
   }
 }
 
-section('31. Windows CMD metacharacter-heavy titles are safely represented');
+section('32. Windows CMD metacharacter-heavy titles are safely represented');
 {
   const queryIndex = 2;
   const queryNum = String(queryIndex + 1).padStart(2, '0');

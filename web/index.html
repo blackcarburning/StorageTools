@@ -709,6 +709,216 @@ const ALL_QUERIES = [
 
 ];
 
+const STAR_QUERY_SCHEMA_COLUMNS = {
+  DBSPACE: [
+    'VOLUME_NAME','DBSPACE_NUM','FILE_SYSTEM','FILE_SYSTEM_ID','CAPACITY_MB','SPACE_MB','FREE_SPACE_MB',
+    'PCT_UTILIZED','STATE','MIN_EXTENSION_MB','MAX_EXTENSION_MB','MAX_REDUCTION_MB','EXTENSION_TRIGGER',
+    'REDUCTION_TRIGGER','LAST_UPDATE_BY','LAST_UPDATE_DATE'
+  ],
+  VOLHISTORY: ['DATE_TIME','TYPE','VOLUME_NAME','BACKUP_SERIES'],
+  ADMINS: ['ADMIN_NAME','AUTHENTICATE','PASSWORDEXP','CONTACT','LASTACCESS','DAYSFAILED','LOCKED','URL','DESCRIPTION','EMAIL_ADDRESS','SESSION_SECURITY','FORCEPWRESET'],
+  STGPOOLS: [
+    'STGPOOL_NAME','POOLTYPE','DEVCLASS','DESCRIPTION','ACCESS','NEXTSTGPOOL','EST_CAPACITY_MB','PCT_UTILIZED',
+    'PCT_MIGR','HIGHMIG','LOWMIG','MIGPROCESS','CACHE','COLLOCATE','RECLAIM','MAXSCRATCH','NUMSCRATCHUSED',
+    'REUSEDELAY','MIGDELAY','OVFLLOCATION','PCT_RECLAIM','PCT_NEXT','MIGREUSEDELAY','KEYMGMT','DATAFORMAT',
+    'COPYSTGPOOLS','ACTIVE_DATA','PROTECT_STGPOOL','PROTECTIONTYPE','PROTECTDELAY','RETVER','MAXSIZE',
+    'DEDUPLICATE','COMPRESSION','REPLICATION','SHARENAME','UUID'
+  ],
+  REPLSERVERS: [
+    'SERVER_NAME','HL_ADDRESS','LL_ADDRESS','PORT','SERVER_PWDSET','TARGET_REPL_SERVER_NAME','REPL_STATE',
+    'LAST_SYNC_TIME','LAST_SYNC_STATUS','LAST_SEND_TIME','LAST_SEND_STATUS'
+  ],
+  HOLDS: ['HOLD_ID','HOLD_NAME','TYPE','STATE','UPDATOR','UPDDATE','DESCRIPTION'],
+  CONTAINERS: [
+    'STGPOOL_NAME','CONTAINER_NAME','STATE','TYPE','PCT_UTILIZED','TOTAL_SPACE_MB','FREE_SPACE_MB',
+    'DELETED_SPACE_MB','PENDING_DELETE_MB','AUDIT_STATE','AUDIT_DATE'
+  ],
+};
+
+const QUERY_BY_OUTPUT_FILE = new Map(ALL_QUERIES.map(q => [q.outputFile, q]));
+
+function normalizeImportedField(value) {
+  return String(value == null ? '' : value)
+    .replace(/^\ufeff+/, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
+    .trim();
+}
+
+function canonicalHeaderName(value) {
+  return normalizeImportedField(value)
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/[\s_]+/g, '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toUpperCase();
+}
+
+function splitSqlTopLevel(text, separator) {
+  const parts = [];
+  let current = '';
+  let depth = 0;
+  let quote = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      current += ch;
+      if (ch === quote) {
+        if (text[i + 1] === quote) { current += text[++i]; }
+        else quote = '';
+      }
+      continue;
+    }
+    if (ch === '\'' || ch === '"') { quote = ch; current += ch; continue; }
+    if (ch === '(') { depth++; current += ch; continue; }
+    if (ch === ')') { if (depth > 0) depth--; current += ch; continue; }
+    if (depth === 0 && ch === separator) {
+      parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim() || !parts.length) parts.push(current.trim());
+  return parts.filter(Boolean);
+}
+
+function findTopLevelKeyword(sql, keyword, fromIndex) {
+  const upper = sql.toUpperCase();
+  const needle = keyword.toUpperCase();
+  let depth = 0;
+  let quote = '';
+  for (let i = fromIndex || 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (quote) {
+      if (ch === quote) {
+        if (sql[i + 1] === quote) i++;
+        else quote = '';
+      }
+      continue;
+    }
+    if (ch === '\'' || ch === '"') { quote = ch; continue; }
+    if (ch === '(') { depth++; continue; }
+    if (ch === ')') { if (depth > 0) depth--; continue; }
+    if (depth !== 0) continue;
+    if (upper.slice(i, i + needle.length) === needle) {
+      const prev = i === 0 ? ' ' : upper[i - 1];
+      const next = upper[i + needle.length] || ' ';
+      if (!/[A-Z0-9_$]/.test(prev) && !/[A-Z0-9_$]/.test(next)) return i;
+    }
+  }
+  return -1;
+}
+
+function dequoteSqlIdentifier(token) {
+  const t = normalizeImportedField(token);
+  if (/^".*"$/.test(t)) return t.slice(1, -1).replace(/""/g, '"');
+  if (/^\[.*\]$/.test(t)) return t.slice(1, -1);
+  if (/^`.*`$/.test(t)) return t.slice(1, -1);
+  return t;
+}
+
+function extractProjectionAlias(expression) {
+  const expr = String(expression || '').trim();
+  if (!expr) return null;
+  const asPos = findTopLevelKeyword(expr, 'AS', 0);
+  if (asPos >= 0) {
+    const alias = dequoteSqlIdentifier(expr.slice(asPos + 2));
+    return alias || null;
+  }
+  const simpleRef = expr.match(/^(?:DISTINCT\s+)?(?:[A-Z0-9_]+\.)?([A-Z0-9_]+)$/i);
+  if (simpleRef) return simpleRef[1];
+
+  const tokens = splitSqlTopLevel(expr, ' ');
+  if (tokens.length >= 2) {
+    const alias = dequoteSqlIdentifier(tokens[tokens.length - 1]);
+    const base = expr.slice(0, expr.lastIndexOf(tokens[tokens.length - 1])).trim();
+    if (alias && base && !/[+\-*/(<>=|&]$/.test(base) && !/^(AND|OR|WHEN|THEN|ELSE|END)$/i.test(alias)) {
+      return alias;
+    }
+  }
+  return null;
+}
+
+function readableExpressionLabel(expression, ordinal) {
+  const compact = String(expression || '').replace(/\s+/g, ' ').trim();
+  if (!compact) return `EXPR_${ordinal + 1}`;
+  return compact.length <= 64 ? compact : compact.slice(0, 61) + '...';
+}
+
+function selectStarTableName(sql) {
+  const m = String(sql || '').trim().match(/^SELECT\s+(?:DISTINCT\s+)?\*\s+FROM\s+([A-Z0-9_.$]+)/i);
+  return m ? m[1].split('.').pop().toUpperCase() : null;
+}
+
+function deriveExpectedColumnsFromSql(sql, schemaColumnsByTable) {
+  const tableName = selectStarTableName(sql);
+  if (tableName) {
+    const schemaCols = (schemaColumnsByTable && schemaColumnsByTable[tableName]) || STAR_QUERY_SCHEMA_COLUMNS[tableName];
+    return Array.isArray(schemaCols) && schemaCols.length > 0 ? schemaCols.slice() : null;
+  }
+
+  const stmt = String(sql || '').trim();
+  const selectPos = findTopLevelKeyword(stmt, 'SELECT', 0);
+  if (selectPos < 0) return null;
+  const fromPos = findTopLevelKeyword(stmt, 'FROM', selectPos + 6);
+  if (fromPos < 0) return null;
+
+  let projectionText = stmt.slice(selectPos + 6, fromPos).trim();
+  projectionText = projectionText.replace(/^DISTINCT\s+/i, '');
+  if (!projectionText) return null;
+
+  return splitSqlTopLevel(projectionText, ',').map((projection, index) => {
+    const trimmed = projection.trim();
+    const alias = extractProjectionAlias(trimmed);
+    if (alias) return alias;
+    const simpleRef = trimmed.match(/^(?:DISTINCT\s+)?(?:[A-Z0-9_]+\.)?([A-Z0-9_]+)$/i);
+    if (simpleRef) return simpleRef[1];
+    return readableExpressionLabel(trimmed, index);
+  });
+}
+
+function extractSchemaColumnsByTable(parsed) {
+  const schema = {};
+  if (!parsed || !Array.isArray(parsed.headers) || !Array.isArray(parsed.rows)) return schema;
+
+  const headerIndex = {};
+  parsed.headers.forEach((header, index) => { headerIndex[canonicalHeaderName(header)] = index; });
+  const tabIdx = headerIndex.TABNAME;
+  const colNoIdx = headerIndex.COLNO;
+  const colNameIdx = headerIndex.COLNAME;
+  if (tabIdx === undefined || colNoIdx === undefined || colNameIdx === undefined) return schema;
+
+  parsed.rows.forEach(row => {
+    const table = normalizeImportedField(row[tabIdx]).toUpperCase();
+    const colName = normalizeImportedField(row[colNameIdx]);
+    const colNo = Number.parseInt(normalizeImportedField(row[colNoIdx]), 10);
+    if (!table || !colName || Number.isNaN(colNo) || colNo < 0) return;
+    if (!schema[table]) schema[table] = [];
+    schema[table][colNo] = colName;
+  });
+
+  Object.keys(schema).forEach(table => {
+    schema[table] = schema[table].filter(col => typeof col === 'string' && col.trim());
+    if (schema[table].length === 0) delete schema[table];
+  });
+
+  return schema;
+}
+
+function applyDerivedColumnsToQueries(schemaColumnsByTable) {
+  ALL_QUERIES.forEach(query => {
+    const starTable = selectStarTableName(query.sql);
+    if (starTable && schemaColumnsByTable && Array.isArray(schemaColumnsByTable[starTable]) && schemaColumnsByTable[starTable].length > 0) {
+      query.columns = schemaColumnsByTable[starTable].slice();
+      return;
+    }
+    if (Array.isArray(query.columns) && query.columns.length > 0) return;
+    const derived = deriveExpectedColumnsFromSql(query.sql, schemaColumnsByTable);
+    if (Array.isArray(derived) && derived.length > 0) query.columns = derived;
+  });
+}
+
+applyDerivedColumnsToQueries();
+
 const WORKBOOK_SHEETS = [
   'Server',
   'Admins',
@@ -1333,8 +1543,7 @@ function downloadSh() {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CSV PARSING  — handles dsmadmc -commadelimited output
-// Format: row 1 = column headers, subsequent rows = data,
-//         trailing lines like "N row(s) affected." and "ANSxxxxX ..." are filtered.
+// Administrative-client banners/noise are filtered before header detection.
 // ═══════════════════════════════════════════════════════════════════════════
 
 function parseCsvField(field) {
@@ -1365,39 +1574,94 @@ function parseCsvLine(line) {
   return result;
 }
 
+function normalizedRecordText(fields) {
+  return fields.map(normalizeImportedField).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
 /**
  * Parse dsmadmc -commadelimited output.
  * Returns { headers: string[], rows: string[][] }
- * Gracefully handles: empty file, no-rows response, ANS messages, error text.
+ * Gracefully handles: empty file, no-rows response, administrative-client banners,
+ * ANS messages, error text, and files with or without emitted header rows.
  */
-function parseDsmOutput(text) {
+function isAdministrativeNoiseRecord(fields) {
+  const text = normalizedRecordText(fields);
+  if (!text) return true;
+  return (
+    /^\d+\s+row\(s\)\s+(?:affected|returned)\.?$/i.test(text) ||
+    /^ANS[A-Z]?\d+[IWES]\b/i.test(text) ||
+    /^IBM (?:Storage Protect|Spectrum Protect|Tivoli Storage Manager)\b/i.test(text) ||
+    /^Session (?:established|closed)\b/i.test(text) ||
+    /^Protecting IBM\b/i.test(text) ||
+    /^SP SERVER>/i.test(text) ||
+    /^Command\s+Line\s+Administrative\s+Interface\s*-\s*Version\s+\S+\s+Release\s+\S+\s+Level\s+\S+$/i.test(text) ||
+    /^\(c\)\s*Copyright\s+IBM\s+Corp\.?\s+(?:199\d|20[0-2]\d|2030)(?:\s+(?:199\d|20[0-2]\d|2030))?$/i.test(text) ||
+    /^Server\s+Version\s+\S+\s+Release\s+\S+\s+Level\s+\S+$/i.test(text) ||
+    /^Server\s+date\/time:\s*\S.*(?:\s+Last\s+access:\s*\S.*)?$/i.test(text)
+  );
+}
+
+function sameHeaderSequence(actual, expected) {
+  if (!Array.isArray(actual) || !Array.isArray(expected) || actual.length !== expected.length) return false;
+  for (let i = 0; i < actual.length; i++) {
+    if (canonicalHeaderName(actual[i]) !== canonicalHeaderName(expected[i])) return false;
+  }
+  return true;
+}
+
+function looksLikeEmittedHeader(fields, expectedHeaders) {
+  const normalized = fields.map(normalizeImportedField);
+  if (normalized.length === 0 || normalized.every(v => !v)) return false;
+  if (Array.isArray(expectedHeaders) && expectedHeaders.length > 0) return sameHeaderSequence(normalized, expectedHeaders);
+  return false;
+}
+
+function parseDsmOutput(text, query) {
   if (!text || !text.trim()) return { headers: [], rows: [] };
 
   const lines = text.split(/\r?\n/);
-  let headers = null;
-  const rows = [];
+  const records = [];
+  const expectedHeaders = query && Array.isArray(query.columns) && query.columns.length > 0 ? query.columns.slice() : null;
 
   for (const line of lines) {
-    const t = line.trim();
-    if (!t) continue;                                          // blank line
-    if (/^\d+\s+row\(s\)\s+(affected|returned)/i.test(t)) break; // footer
-    if (/^ANS[A-Z]?\d+[IWES]/i.test(t)) continue;            // ANS message code (e.g. ANS2034E, ANSR0027W)
-    if (/^IBM (Storage Protect|Spectrum Protect|Tivoli Storage Manager)/i.test(t)) continue;
-    if (/^Session (established|closed)/i.test(t)) continue;
-    if (/^Protecting IBM/i.test(t)) continue;
-    if (/^SP SERVER>/i.test(t)) continue;
-    // dsmadmc administrative-client banner lines (tab/space separated, version-independent)
-    if (/^Command\s+Line\s+Administrative\s+Interface/i.test(t)) continue;
-    if (/^\(c\)\s+Copyright\s+IBM\s+Corp\b/i.test(t)) continue;
-    if (/^Server\s+Version\s+\d+\s+Release\s+\d+\s+Level\s+\d/i.test(t)) continue;
-    if (/^Server\s+date\/time:/i.test(t)) continue;
-
-    const fields = parseCsvLine(t);
-    if (!headers) { headers = fields; }
-    else           { rows.push(fields); }
+    if (!line || !line.trim()) continue;
+    const fields = parseCsvLine(line).map(normalizeImportedField);
+    if (isAdministrativeNoiseRecord(fields)) {
+      if (/^\d+\s+row\(s\)\s+(?:affected|returned)\.?$/i.test(normalizedRecordText(fields))) break;
+      continue;
+    }
+    records.push(fields);
   }
 
-  return { headers: headers || [], rows };
+  if (records.length === 0) return { headers: [], rows: [] };
+
+  if (looksLikeEmittedHeader(records[0], expectedHeaders)) {
+    return { headers: records[0], rows: records.slice(1) };
+  }
+
+  if (expectedHeaders && expectedHeaders.length > 0) {
+    return { headers: expectedHeaders.slice(), rows: records };
+  }
+
+  return { headers: records[0], rows: records.slice(1) };
+}
+
+function buildImportedState(textFilesByName) {
+  const nextImported = {};
+  const schemaText = textFilesByName['doc_41_syscat_key_cols.csv'];
+  if (schemaText) {
+    const schemaQuery = QUERY_BY_OUTPUT_FILE.get('doc_41_syscat_key_cols.csv');
+    const schemaParsed = parseDsmOutput(schemaText, schemaQuery);
+    applyDerivedColumnsToQueries(extractSchemaColumnsByTable(schemaParsed));
+  }
+
+  Object.keys(textFilesByName).forEach(name => {
+    const query = QUERY_BY_OUTPUT_FILE.get(name) || null;
+    const parsed = parseDsmOutput(textFilesByName[name], query);
+    nextImported[name] = { name, headers: parsed.headers, rows: parsed.rows };
+  });
+
+  return nextImported;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1549,14 +1813,12 @@ function handleTarFile(file) {
     };
 
     // Atomically build new imported state
-    const newImported = {};
+    const importedTexts = {};
     for (const q of ALL_QUERIES) {
       const data = result.files.get(q.outputFile);
-      if (data) {
-        const parsed = parseDsmOutput(decode(data));
-        newImported[q.outputFile] = { name: q.outputFile, headers: parsed.headers, rows: parsed.rows };
-      }
+      if (data) importedTexts[q.outputFile] = decode(data);
     }
+    const newImported = buildImportedState(importedTexts);
 
     const logRaw  = result.files.get('collection_log.txt');
     const errRaw  = result.files.get('collection_errors.log');
@@ -1597,17 +1859,15 @@ function handleFiles(fileList) {
 
   // Fallback: individual CSV / text files (legacy)
   let loaded = 0;
+  const importedTexts = {};
   files.forEach(file => {
     const reader = new FileReader();
     reader.onload = e => {
-      const parsed = parseDsmOutput(e.target.result);
-      STATE.imported[file.name] = {
-        name   : file.name,
-        headers: parsed.headers,
-        rows   : parsed.rows
-      };
+      importedTexts[file.name] = e.target.result;
       loaded++;
       if (loaded === files.length) {
+        const parsedImports = buildImportedState(importedTexts);
+        Object.keys(parsedImports).forEach(name => { STATE.imported[name] = parsedImports[name]; });
         refreshImportUI();
         showStatus(`Imported ${loaded} file(s). ${Object.keys(STATE.imported).length} total.`);
       }
@@ -2284,6 +2544,29 @@ function ws_updateRef(ws, r, c) {
 }
 
 function addQueryBlock(ws, startRow, query, data) {
+  function makeUniqueHeaders(baseHeaders, width) {
+    const seen = new Set();
+    const headers = [];
+    const base = Array.isArray(baseHeaders) ? baseHeaders.slice() : [];
+    const total = Math.max(width || 0, base.length);
+    let extraCount = 0;
+    for (let i = 0; i < total; i++) {
+      let label = normalizeImportedField(base[i] !== undefined ? base[i] : '');
+      if (!label) {
+        if (i >= base.length) label = `EXTRA_${++extraCount}`;
+        else label = `COLUMN_${i + 1}`;
+      } else if (i >= base.length) {
+        label = `EXTRA_${++extraCount}`;
+      }
+      const root = label;
+      let suffix = 2;
+      while (seen.has(label)) label = `${root}_${suffix++}`;
+      seen.add(label);
+      headers.push(label);
+    }
+    return headers;
+  }
+
   let r = startRow;
   const v8mark = query.v8only ? ' [v8 only]' : '';
 
@@ -2295,7 +2578,7 @@ function addQueryBlock(ws, startRow, query, data) {
     r++;
   } else if (!data.rows || data.rows.length === 0) {
     // Use imported headers, falling back to query.columns metadata for RC_NOTFOUND cases
-    const emptyHdrs = (data.headers && data.headers.length > 0) ? data.headers : (query.columns || null);
+    const emptyHdrs = makeUniqueHeaders((data.headers && data.headers.length > 0) ? data.headers : (query.columns || null), (data.headers || []).length);
     if (emptyHdrs && emptyHdrs.length > 0) {
       emptyHdrs.forEach((h, c) => ws_set(ws, r, c, h, STYLES.columnHeader));
       ws_updateRef(ws, r, emptyHdrs.length - 1);
@@ -2304,7 +2587,11 @@ function addQueryBlock(ws, startRow, query, data) {
     ws_set(ws, r, 0, 'No rows returned', STYLES.noData);
     r++;
   } else {
-    const headers = data.headers.length > 0 ? data.headers : (query.columns || ['(data)']);
+    const widestRow = data.rows.reduce((max, row) => Math.max(max, row.length), 0);
+    const headers = makeUniqueHeaders(
+      data.headers.length > 0 ? data.headers : (query.columns || []),
+      widestRow
+    );
     headers.forEach((h, c) => ws_set(ws, r, c, h, STYLES.columnHeader));
     ws_updateRef(ws, r, headers.length - 1);
     r++;
