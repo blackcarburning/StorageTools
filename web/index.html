@@ -763,7 +763,8 @@ function escapeForCmd(sql) {
   return sql.replace(/%/g, '%%');
 }
 
-/** Replace non-ASCII dash punctuation with ASCII equivalent for CMD console output. */
+/** Replace non-ASCII dash punctuation with ASCII equivalent for CMD console output.
+ *  Use only in generateCmdContent — do not apply to SH generation or UI text. */
 function cmdSafeTitle(title) {
   return title.replace(/[\u2013\u2014]/g, ' - ');
 }

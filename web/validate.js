@@ -1115,7 +1115,7 @@ section('27. Windows CMD dsmadmc invocation (credentials and optfile)');
   }
 
   // Preflight must use quoted credentials too
-  const preflightLine = cmd.split('\r\n').find(l => l.includes('QUERY SESSION'));
+  const preflightLine = cmd.split(/\r?\n/).find(l => l.includes('QUERY SESSION'));
   if (preflightLine && preflightLine.includes('-id="%ADMID%"') && preflightLine.includes('-pa="%ADMPA%"')) {
     ok('CMD preflight dsmadmc uses quoted credentials');
   } else {
@@ -1150,7 +1150,7 @@ section('28. Windows CMD: no non-ASCII dash punctuation in generated text');
 section('29. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FINDSTR/DEL');
 {
   const qerrPath = '"%OUTDIR%\\qerr.tmp"';
-  const count = (cmd.match(new RegExp(qerrPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+  const count = cmd.split(qerrPath).length - 1;
   // Expect at least 6 uses: redirection (in buildCmdLine), size-check×2, TYPE×2, FINDSTR, DEL
   if (count >= 6) {
     ok(`CMD uses consistent qerr.tmp path (${count} times)`);
