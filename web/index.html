@@ -1578,6 +1578,13 @@ function normalizedRecordText(fields) {
   return fields.map(normalizeImportedField).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
+const IBM_COPYRIGHT_YEAR_PART = '(?:19|20)\\d{2}';
+const IBM_COPYRIGHT_FULL_RE = new RegExp(`^\\(\\s*c\\s*\\)\\s*copyright\\s+ibm\\s+corp\\.?\\s+${IBM_COPYRIGHT_YEAR_PART}(?:\\s*[,;:/-]?\\s*${IBM_COPYRIGHT_YEAR_PART})?$`, 'i');
+const IBM_COPYRIGHT_PREFIX_RE = new RegExp(`^\\(\\s*c\\s*\\)\\s*copyright\\s+ibm\\s+corp\\.?\\s+${IBM_COPYRIGHT_YEAR_PART}$`, 'i');
+const IBM_COPYRIGHT_YEAR_SUFFIX_RE = new RegExp(`^[,;:/-]?\\s*${IBM_COPYRIGHT_YEAR_PART}$`, 'i');
+// Handles known IBM no-match variants (colon/dash separator, spacing differences, criteria/criterion wording)
+const NO_MATCH_RECORD_RE = /^ANR2034E\b.*\bSELECT\b\s*[:\-]?\s*NO\s+MATCH\s+FOUND(?:\s+USING\s+THIS\s+CRITERI(?:A|ON))?\b.*$/i;
+
 function normalizeNoiseFragment(value) {
   return normalizeImportedField(value)
     .replace(/^["'`]+|["'`]+$/g, '')
@@ -1593,16 +1600,12 @@ function isIbmCopyrightRecord(fields) {
   const fragments = normalizedNoiseFragments(fields);
   if (fragments.length === 0) return false;
 
-  const fullPattern = /^\(\s*c\s*\)\s*copyright\s+ibm\s+corp\.?\s+(?:19|20)\d{2}(?:\s*[,;:/-]?\s*(?:19|20)\d{2})?$/i;
-  const prefixPattern = /^\(\s*c\s*\)\s*copyright\s+ibm\s+corp\.?\s+(?:19|20)\d{2}$/i;
-  const yearSuffixPattern = /^[,;:/-]?\s*(?:19|20)\d{2}$/i;
-
   const joined = fragments.join(' ').replace(/\s+/g, ' ').trim();
-  if (fullPattern.test(joined)) return true;
-  if (fragments.some(fragment => fullPattern.test(fragment))) return true;
+  if (IBM_COPYRIGHT_FULL_RE.test(joined)) return true;
+  if (fragments.some(fragment => IBM_COPYRIGHT_FULL_RE.test(fragment))) return true;
 
   for (let i = 0; i < fragments.length - 1; i++) {
-    if (prefixPattern.test(fragments[i]) && yearSuffixPattern.test(fragments[i + 1])) return true;
+    if (IBM_COPYRIGHT_PREFIX_RE.test(fragments[i]) && IBM_COPYRIGHT_YEAR_SUFFIX_RE.test(fragments[i + 1])) return true;
   }
   return false;
 }
@@ -1611,7 +1614,7 @@ function isNoMatchRecord(fields) {
   const fragments = normalizedNoiseFragments(fields);
   if (fragments.length === 0) return false;
   const text = fragments.join(' ').replace(/\s+/g, ' ').trim();
-  return /^ANR2034E\b.*\bSELECT\b\s*[:\-]?\s*NO\s+MATCH\s+FOUND(?:\s+USING\s+THIS\s+CRITERI(?:A|ON))?\b.*$/i.test(text);
+  return NO_MATCH_RECORD_RE.test(text);
 }
 
 /**

@@ -903,6 +903,18 @@ if (typeof parseDsmOutput !== 'function') {
   if (variantsOk) ok('parseDsmOutput: tab/comma/quoted/BOM/control banner variants filtered');
   else fail('parseDsmOutput: one or more banner variants still leaked into rows');
 
+  const midDataCopyright = parseDsmOutput([
+    'A,B',
+    'x,y',
+    '(c) Copyright IBM Corp. 1990,2025',
+    'z,w',
+  ].join('\n'), { columns: ['A', 'B'] });
+  if (midDataCopyright.rows.length === 2 && midDataCopyright.rows[0][0] === 'x' && midDataCopyright.rows[1][0] === 'z') {
+    ok('parseDsmOutput: copyright rows are filtered even when they appear between data rows');
+  } else {
+    fail(`parseDsmOutput: mid-data copyright row handling failed: ${JSON.stringify(midDataCopyright)}`);
+  }
+
   const noMatchVariants = [
     'ANR2034E SELECT: No match found using this criteria.',
     '"ANR2034E SELECT: No match found using this criteria."',
@@ -1224,7 +1236,7 @@ if (readme.includes('banner') || readme.includes('administrative-client') || rea
 } else {
   fail('README missing troubleshooting note for CLI banner filtering');
 }
-if (readme.includes('ANR2034E') || readme.includes('No match found')) {
+if (readme.includes('ANR2034E') && readme.includes('No match found')) {
   ok('README includes troubleshooting note for no-match normalization');
 } else {
   fail('README missing troubleshooting note for ANR2034E/no-match normalization');
