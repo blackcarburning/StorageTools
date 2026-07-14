@@ -46,7 +46,7 @@ let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatS
     parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet,
     XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
     sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
-    parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set;
+    parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue;
 try {
   const elements = new Map();
   const makeEl = (value = '') => ({
@@ -99,7 +99,7 @@ try {
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
     'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set };`
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue };`
   );
   const result = sandbox(
     mockDoc,
@@ -117,7 +117,7 @@ try {
      parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX,
      buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
      sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
-     parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set } = result);
+     parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue } = result);
 } catch (err) {
   fail(`Could not evaluate index.html script: ${err.message}`);
   process.exit(1);
@@ -1156,6 +1156,86 @@ section('29. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FIN
     ok(`CMD uses consistent qerr.tmp path (${count} times)`);
   } else {
     fail(`CMD uses qerr.tmp path fewer times than expected (${count}); may be inconsistent`);
+  }
+}
+
+section('30. Windows CMD title-safe stderr/auth flow uses subroutine (no block interpolation)');
+{
+  const inlineLiteralLabelRegex = /echo --- Stderr for \[[0-9]+\/[0-9]+\]/;
+
+  if (cmd.includes(':HandleQueryStderr')) {
+    ok('CMD defines :HandleQueryStderr subroutine');
+  } else {
+    fail('CMD missing :HandleQueryStderr subroutine');
+  }
+
+  if (cmd.includes('CALL :HandleQueryStderr')) {
+    ok('CMD calls :HandleQueryStderr for each query');
+  } else {
+    fail('CMD does not call :HandleQueryStderr');
+  }
+
+  if (!cmd.includes('FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO IF %%~zS GTR 0 (')) {
+    ok('CMD removed parenthesized stderr block that could break on title parentheses');
+  } else {
+    fail('CMD still contains parenthesized stderr block with inline title risk');
+  }
+
+  if (!cmd.includes('IF %ANS1051_FATAL%==1 (')) {
+    ok('CMD removed parenthesized ANS1051 fatal block with inline title risk');
+  } else {
+    fail('CMD still contains parenthesized ANS1051 fatal block');
+  }
+
+  if (!inlineLiteralLabelRegex.test(cmd)) {
+    ok('CMD no longer inlines literal query labels in stderr block output');
+  } else {
+    fail('CMD still inlines literal query labels in stderr block output');
+  }
+}
+
+section('31. Windows CMD metacharacter-heavy titles are safely represented');
+{
+  const queryIndex = 2;
+  const queryNum = String(queryIndex + 1).padStart(2, '0');
+  const totalQueries = ALL_QUERIES.length;
+  const originalTitle = ALL_QUERIES[queryIndex].title;
+  const specialTitle = 'Database Volumes (30 days) (48 hrs) & | < > ^ % "double"\n\'single\'';
+  ALL_QUERIES[queryIndex].title = specialTitle;
+  const cmdSpecial = generateCmdContent();
+  ALL_QUERIES[queryIndex].title = originalTitle;
+
+  const cmdSafeSpecialTitle = cmdSafeSetValue(cmdSafeTitle(specialTitle));
+  const expectedSetLine = `SET "Q_LABEL=[${queryNum}/${totalQueries}] ${cmdSafeSpecialTitle}"`;
+
+  if (cmdSpecial.includes(expectedSetLine)) {
+    ok('CMD safely stores metacharacter-heavy title via SET assignment escaping');
+  } else {
+    fail('CMD does not safely escape metacharacter-heavy title in SET assignment');
+  }
+
+  if (cmdSpecial.includes('echo --- Stderr for "%Q_LABEL%" ---')) {
+    ok('CMD stderr output uses quoted variable expansion rather than inline title literal');
+  } else {
+    fail('CMD stderr output does not use quoted variable expansion');
+  }
+
+  if (cmdSpecial.includes('IF "%QERR_HAS_STDERR%"=="1" TYPE "%OUTDIR%\\qerr.tmp" >> "%OUTDIR%\\collection_errors.log"')) {
+    ok('CMD still appends stderr output to collection_errors.log');
+  } else {
+    fail('CMD no longer appends stderr output to collection_errors.log');
+  }
+
+  if (cmdSpecial.includes('FINDSTR /I "ANS1051I" "%OUTDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"')) {
+    ok('CMD still detects real ANS1051I authentication failures');
+  } else {
+    fail('CMD missing ANS1051I detection in stderr handling');
+  }
+
+  if (cmdSpecial.includes('IF EXIST "%OUTDIR%\\qerr.tmp" DEL "%OUTDIR%\\qerr.tmp"')) {
+    ok('CMD still cleans up qerr.tmp after stderr/auth checks');
+  } else {
+    fail('CMD missing qerr.tmp cleanup in stderr/auth flow');
   }
 }
 
