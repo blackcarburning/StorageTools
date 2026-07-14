@@ -753,7 +753,7 @@ if (typeof sanitizeXmlChars !== 'function') {
   else fail(`sanitizeXmlChars must preserve TAB/LF/CR, got ${JSON.stringify(sanitizeXmlChars('\t\n\r'))}`);
 
   // Remove C0 control characters (except TAB=0x09, LF=0x0A, CR=0x0D)
-  const c0 = '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0B\x0C\x0E\x0F\x10\x1F\x7F';
+  const c0 = '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0B\x0C\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F\x7F';
   if (sanitizeXmlChars(c0) === '') ok('sanitizeXmlChars removes forbidden C0 controls and DEL');
   else fail(`sanitizeXmlChars should remove C0/DEL, got ${JSON.stringify(sanitizeXmlChars(c0))}`);
 
@@ -1027,7 +1027,7 @@ if (typeof addQueryBlock !== 'function') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('24. README troubleshooting notes for sanitization and banner filtering');
+section('23. README troubleshooting notes for sanitization and banner filtering');
 if (readme.includes('control character') || readme.includes('XML') || readme.includes('illegal')) {
   ok('README includes troubleshooting note for XML/control-character issues');
 } else {
