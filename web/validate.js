@@ -585,6 +585,22 @@ if (typeof buildSheet !== 'function' || typeof buildCoverSheet !== 'function' ||
       ? wbB.Sheets.Server['!cols'][0].wch : 0;
     if (minW >= 8) ok('XLSX widths: minimum width bound enforced');
     else fail(`XLSX widths: expected minimum width >=8, got ${minW}`);
+
+    // Test: multiline heading uses its longest line; heading beats shorter data value
+    STATE.imported[serverQuery.outputFile] = {
+      name: serverQuery.outputFile,
+      headers: ['ID', 'H2', 'Short\nLonger heading line'],
+      rows: [['x', 'y', 'z']],
+    };
+    const wbC = { SheetNames: [], Sheets: {} };
+    const addSheetC = (ws, name) => { wbC.SheetNames.push(name); wbC.Sheets[name] = ws; };
+    buildSheet({ SheetNames: wbC.SheetNames, Sheets: wbC.Sheets, utils: { book_append_sheet: addSheetC } }, 'Server');
+    const wsC = wbC.Sheets.Server;
+    // Column 2: header 'Short\nLonger heading line' — longest line 'Longer heading line' (19 chars)
+    // data 'z' (1 char) — heading wins; max(19, 1) + 2 padding = 21
+    const wC2 = wsC && wsC['!cols'] && wsC['!cols'][2] ? wsC['!cols'][2].wch : 0;
+    if (wC2 === 21) ok('XLSX widths: multiline headings use their longest line');
+    else fail(`XLSX widths: expected multiline heading width 21, got ${wC2}`);
   }
 
   STATE.imported = {};
