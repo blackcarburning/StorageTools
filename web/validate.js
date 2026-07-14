@@ -805,7 +805,68 @@ if (typeof syncReportMetadataFromConfig !== 'function' || typeof readReportMetad
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('19. sanitizeXmlChars — XML 1.0 character sanitizer');
+section('19. CMD default admin/optfile and unchanged SH defaults');
+{
+  const adminPlaceholderMatch = html.match(/id="adminId"[^>]*placeholder="([^"]+)"/);
+  if (adminPlaceholderMatch && adminPlaceholderMatch[1] === 'admin') ok('HTML admin default is shown as admin');
+  else fail(`HTML admin default should be admin, got ${JSON.stringify(adminPlaceholderMatch && adminPlaceholderMatch[1])}`);
+
+  const optfilePlaceholderMatch = html.match(/id="optfileWindows"[^>]*placeholder="([^"]+)"/);
+  if (optfilePlaceholderMatch && optfilePlaceholderMatch[1] === 'c:\\progra~1\\tivoli\\tsm\\baclient\\dsm.opt') ok('HTML Windows optfile default is shown exactly');
+  else fail(`HTML Windows optfile default should be exact path, got ${JSON.stringify(optfilePlaceholderMatch && optfilePlaceholderMatch[1])}`);
+
+  const elements3 = new Map();
+  const makeEl3 = (value = '') => ({
+    value, innerHTML: '', textContent: '', className: '', href: '', download: '', style: {},
+    classList: { add() {}, remove() {} }, addEventListener() {}, click() {},
+  });
+  const defaults3 = {
+    dsmadmcPath: 'C:\\Program Files\\Tivoli\\TSM\\baclient\\dsmadmc.exe',
+    dsmadmcPathUnix: '/opt/tivoli/tsm/client/ba/bin/dsmadmc',
+    adminId: '', adminPa: 'PASSWORD', optfileWindows: '', optfileUnix: '',
+    serverName: 'CONFIG_SERVER', customerName: 'CONFIG_CUSTOMER',
+    reportCustomerName: '', reportPreparedBy: '', reportDate: '', reportServerName: '',
+    outputDirWindows: 'StorageTools_Output', outputDirUnix: 'StorageTools_Output',
+    completeQueryStats: '', importTableAll: '', importSummary: '', reportStats: '', reportStatus: '',
+    statusBar: '', configStatus: '', btnGenReport: '', dropZone: '', fileInput: '',
+  };
+  Object.entries(defaults3).forEach(([k, v]) => elements3.set(k, makeEl3(v)));
+  const mockDoc3 = {
+    querySelectorAll: () => ({ forEach() {} }),
+    getElementById(id) { if (!elements3.has(id)) elements3.set(id, makeEl3('')); return elements3.get(id); },
+    createElement() { return makeEl3(''); },
+    addEventListener() {},
+  };
+  const fn3 = new Function( // eslint-disable-line no-new-func
+    'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
+    `${js}; return { generateCmdContent, generateShContent };`
+  );
+  const ctx3 = fn3(
+    mockDoc3,
+    { getItem: () => null, setItem: () => {} },
+    () => {},
+    () => null,
+    { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} },
+    class Blob {},
+    TextEncoder,
+    TextDecoder,
+    () => {},
+    () => 0,
+  );
+  const cmdDefaults = ctx3.generateCmdContent();
+  const shDefaults = ctx3.generateShContent();
+  if (cmdDefaults.includes('SET "ADMID=admin"')) ok('CMD defaults admin ID to admin when not overridden');
+  else fail('CMD should default admin ID to admin when not overridden');
+  if (cmdDefaults.includes('SET "OPTFILE=c:\\progra~1\\tivoli\\tsm\\baclient\\dsm.opt"')) ok('CMD defaults Windows optfile path when not overridden');
+  else fail('CMD should default Windows optfile path when not overridden');
+  if (shDefaults.includes("ADMID='ADMINUSER'")) ok('SH admin default remains unchanged');
+  else fail('SH admin default should remain ADMINUSER');
+  if (shDefaults.includes("OPTFILE=''")) ok('SH optfile default remains unchanged');
+  else fail('SH optfile default should remain blank');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('20. sanitizeXmlChars — XML 1.0 character sanitizer');
 if (typeof sanitizeXmlChars !== 'function') {
   fail('sanitizeXmlChars is not exported');
 } else {
@@ -850,7 +911,7 @@ if (typeof sanitizeXmlChars !== 'function') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('20. Generated worksheet XML contains no XML 1.0-forbidden characters');
+section('21. Generated worksheet XML contains no XML 1.0-forbidden characters');
 if (typeof XLSX === 'undefined' || typeof buildCoverSheet !== 'function') {
   fail('XLSX or buildCoverSheet not available for XML content tests');
 } else {
@@ -903,7 +964,7 @@ if (typeof XLSX === 'undefined' || typeof buildCoverSheet !== 'function') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('21. parseDsmOutput — banner filtering and header detection');
+section('22. parseDsmOutput — banner filtering and header detection');
 if (typeof parseDsmOutput !== 'function') {
   fail('parseDsmOutput is not exported');
 } else {
@@ -1083,7 +1144,7 @@ if (typeof parseDsmOutput !== 'function') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('22. SELECT projection parsing and query metadata');
+section('23. SELECT projection parsing and query metadata');
 if (typeof deriveExpectedColumnsFromSql !== 'function') {
   fail('deriveExpectedColumnsFromSql is not exported');
 } else {
@@ -1109,7 +1170,7 @@ if (typeof deriveExpectedColumnsFromSql !== 'function') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('23. Left-alignment in generated XLSX styles');
+section('24. Left-alignment in generated XLSX styles');
 if (typeof XLSX === 'undefined') {
   fail('XLSX not available for alignment tests');
 } else {
@@ -1157,7 +1218,7 @@ if (typeof XLSX === 'undefined') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('24. Column header fallback and row/header length safety');
+section('25. Column header fallback and row/header length safety');
 if (typeof addQueryBlock !== 'function') {
   fail('addQueryBlock is not exported');
 } else {
@@ -1284,7 +1345,7 @@ if (typeof addQueryBlock !== 'function') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('25. README troubleshooting notes for sanitization and banner filtering');
+section('26. README troubleshooting notes for sanitization and banner filtering');
 if (readme.includes('control character') || readme.includes('XML') || readme.includes('illegal')) {
   ok('README includes troubleshooting note for XML/control-character issues');
 } else {
@@ -1302,7 +1363,7 @@ if (readme.includes('ANR2034E') && readme.includes('No match found')) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('26. Windows CMD path correctness (backslash escaping)');
+section('27. Windows CMD path correctness (backslash escaping)');
 {
   // All four critical Windows paths must be present with correct separator
   const goodPaths = [
@@ -1329,7 +1390,7 @@ section('26. Windows CMD path correctness (backslash escaping)');
   }
 }
 
-section('27. Windows CMD ANS1051 authentication detection (no stale ERRORLEVEL)');
+section('28. Windows CMD ANS1051 authentication detection (no stale ERRORLEVEL)');
 {
   // Must NOT use stale ERRORLEVEL pattern
   if (!cmd.includes('IF %ERRORLEVEL%==0 SET ANS1051_FATAL=1')) {
@@ -1360,7 +1421,7 @@ section('27. Windows CMD ANS1051 authentication detection (no stale ERRORLEVEL)'
   }
 }
 
-section('28. Windows CMD dsmadmc invocation (credentials and optfile)');
+section('29. Windows CMD dsmadmc invocation (credentials and optfile)');
 {
   // Credentials must be quoted in every invocation
   if (cmd.includes('-id="%ADMID%"') && cmd.includes('-pa="%ADMPA%"')) {
@@ -1385,7 +1446,7 @@ section('28. Windows CMD dsmadmc invocation (credentials and optfile)');
   }
 }
 
-section('29. Windows CMD: no non-ASCII dash punctuation in generated text');
+section('30. Windows CMD: no non-ASCII dash punctuation in generated text');
 {
   const emDash = '\u2014';
   const enDash = '\u2013';
@@ -1409,7 +1470,7 @@ section('29. Windows CMD: no non-ASCII dash punctuation in generated text');
   }
 }
 
-section('30. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FINDSTR/DEL');
+section('31. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FINDSTR/DEL');
 {
   const qerrPath = '"%OUTDIR%\\qerr.tmp"';
   const count = cmd.split(qerrPath).length - 1;
@@ -1421,7 +1482,7 @@ section('30. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FIN
   }
 }
 
-section('31. Windows CMD title-safe stderr/auth flow uses subroutine (no block interpolation)');
+section('32. Windows CMD title-safe stderr/auth flow uses subroutine (no block interpolation)');
 {
   const inlineLiteralLabelRegex = /echo --- Stderr for \[[0-9]+\/[0-9]+\]/;
 
@@ -1456,7 +1517,7 @@ section('31. Windows CMD title-safe stderr/auth flow uses subroutine (no block i
   }
 }
 
-section('32. Windows CMD metacharacter-heavy titles are safely represented');
+section('33. Windows CMD metacharacter-heavy titles are safely represented');
 {
   const queryIndex = 2;
   const queryNum = String(queryIndex + 1).padStart(2, '0');

@@ -131,7 +131,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       </div>
       <div class="fg">
         <label>Admin User ID</label>
-        <input type="text" id="adminId" placeholder="adminuser">
+        <input type="text" id="adminId" placeholder="admin">
       </div>
       <div class="fg">
         <label>Admin Password</label>
@@ -140,7 +140,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       </div>
       <div class="fg">
         <label>Windows Option File Path (optional)</label>
-        <input type="text" id="optfileWindows" placeholder="C:\TSM\dsm.opt - leave blank if not required">
+        <input type="text" id="optfileWindows" placeholder="c:\progra~1\tivoli\tsm\baclient\dsm.opt">
         <span class="hint">Windows <code>dsm.opt</code> path — used only in <code>.cmd</code> scripts.</span>
       </div>
       <div class="fg">
@@ -945,6 +945,8 @@ const WORKBOOK_SHEETS = [
 
 const DEFAULT_WINDOWS_DSMADMC = 'C:\\Program Files\\Tivoli\\TSM\\baclient\\dsmadmc.exe';
 const DEFAULT_UNIX_DSMADMC    = '/opt/tivoli/tsm/client/ba/bin/dsmadmc';
+const DEFAULT_ADMIN_ID        = 'admin';
+const DEFAULT_WINDOWS_OPTFILE = 'c:\\progra~1\\tivoli\\tsm\\baclient\\dsm.opt';
 const DEFAULT_OUTPUT_DIR      = 'StorageTools_Output';
 
 const STATE = {
@@ -1038,12 +1040,12 @@ function generateCmdContent() {
   lines.push('REM =================================================================');
   lines.push('');
   lines.push(`SET "DSMADMC=${cfg.dsmadmcPath || DEFAULT_WINDOWS_DSMADMC}"`);
-  lines.push(`SET "ADMID=${cfg.adminId || 'ADMINUSER'}"`);
+  lines.push(`SET "ADMID=${cfg.adminId || DEFAULT_ADMIN_ID}"`);
   lines.push(`SET "ADMPA=${cfg.adminPa || 'PASSWORD'}"`);
   lines.push(`SET "OUTDIR=${cfg.outputDirWindows || DEFAULT_OUTPUT_DIR}"`);
   lines.push('');
   lines.push('REM Option file - leave blank if not required');
-  lines.push(`SET "OPTFILE=${cfg.optfileWindows || ''}"`);
+  lines.push(`SET "OPTFILE=${cfg.optfileWindows || DEFAULT_WINDOWS_OPTFILE}"`);
   lines.push('SET "OPTARG="');
   lines.push('IF NOT "%OPTFILE%"=="" SET OPTARG=-optfile="%OPTFILE%"');
   lines.push('');
@@ -1266,10 +1268,6 @@ function generateCmdContent() {
 
 function downloadCmd() {
   const cfg = readConfig();
-  if (!cfg.adminId) {
-    alert('Please enter an Admin User ID on the Setup tab before generating the command file.');
-    showTab('setup'); return;
-  }
   const content  = generateCmdContent();
   const server   = (cfg.serverName || 'SERVER').replace(/[^A-Za-z0-9_-]/g, '_');
   const filename = `StorageTools_Complete_${server}.cmd`;
