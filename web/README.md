@@ -148,6 +148,23 @@ If you see `ANS1051I Invalid user id or password`, correct the admin credentials
 
 If the archive creation step fails, the script retains all individual files in the working directory and prints its path. You can inspect those files directly or re-run the script.
 
+### Excel recovery warnings (illegal XML characters)
+
+If Excel shows a repair/recovery message when opening the generated `.xlsx` file (e.g. "Replaced Part: /xl/worksheets/sheetN.xml part with XML error. Illegal xml character."), this was caused by control characters embedded in `dsmadmc` output CSV files. Since this version, StorageTools automatically strips all characters forbidden by XML 1.0 (C0 control bytes, isolated UTF-16 surrogate code units, and noncharacters U+FFFE/U+FFFF) before writing any value into the workbook. Valid Unicode text, tabs, line feeds, and supplementary characters (emoji, CJK extensions, etc.) are preserved. No manual intervention is required.
+
+### Administrative-client banner lines
+
+Older or certain configurations of `dsmadmc` print a multi-line banner before the CSV output:
+
+```
+Command Line Administrative Interface - Version 8    Release 1    Level 27.0
+(c) Copyright IBM Corp. 1990    2025
+Server Version 8    Release 1    Level 27.000
+Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14
+```
+
+StorageTools automatically filters these banner lines (case-insensitively, regardless of whitespace or version numbers) before header detection and data parsing. The first real comma-delimited row after banner and ANS-message filtering is always used as the column header row.
+
 ---
 
 ## Offline Usage

@@ -424,18 +424,22 @@ const ALL_QUERIES = [
 
   { id:'hc_13_not_backed_up', title:'Nodes Not Backed Up (>24 hrs)', section:'Nodes',
     sql:"SELECT DISTINCT NODE_NAME FROM FILESPACES WHERE BACKUP_END<CURRENT_TIMESTAMP - 1 DAYS AND BACKUP_END IS NOT NULL AND FILESPACE_TYPE NOT IN ('VSS') AND FILESPACE_TYPE NOT LIKE 'API:%%' ORDER BY NODE_NAME",
+    columns:['NODE_NAME'],
     outputFile:'hc_13_not_backed_up.csv' },
 
   { id:'hc_14_never_contacted', title:'Nodes That Never Contacted Server', section:'Nodes',
     sql:"SELECT NODE_NAME,REG_TIME,DOMAIN_NAME,NODETYPE FROM NODES WHERE PLATFORM_NAME IS NULL ORDER BY REG_TIME DESC",
+    columns:['NODE_NAME','REG_TIME','DOMAIN_NAME','NODETYPE'],
     outputFile:'hc_14_never_contacted.csv' },
 
   { id:'hc_15_locked_nodes', title:'Locked Nodes', section:'Nodes',
     sql:"SELECT NODE_NAME,LOCKED,LASTACC_TIME,DOMAIN_NAME,PLATFORM_NAME FROM NODES WHERE LOCKED='YES' ORDER BY NODE_NAME",
+    columns:['NODE_NAME','LOCKED','LASTACC_TIME','DOMAIN_NAME','PLATFORM_NAME'],
     outputFile:'hc_15_locked_nodes.csv' },
 
   { id:'hc_16_stale_nodes', title:'Stale Nodes (No Access in 30 Days)', section:'Nodes',
     sql:"SELECT NODE_NAME,LASTACC_TIME,DOMAIN_NAME,PLATFORM_NAME,CLIENT_VERSION,CLIENT_RELEASE FROM NODES WHERE LASTACC_TIME<CURRENT_TIMESTAMP - 30 DAYS AND LASTACC_TIME IS NOT NULL ORDER BY LASTACC_TIME ASC",
+    columns:['NODE_NAME','LASTACC_TIME','DOMAIN_NAME','PLATFORM_NAME','CLIENT_VERSION','CLIENT_RELEASE'],
     outputFile:'hc_16_stale_nodes.csv' },
 
   { id:'hc_17_no_repl_start', title:'Nodes with Replication Never Started', section:'Nodes', v8only:true, warnIfMissing:true,
@@ -508,14 +512,17 @@ const ALL_QUERIES = [
 
   { id:'doc_22_libraries', title:'Libraries', section:'Storage',
     sql:"SELECT LIBRARY_NAME,LIBRARY_TYPE,ACS_ID,PRIVATE_CATEGORY,SCRATCH_CATEGORY,EXTERNAL_MGR,SHARED,PRIMARY_LIB_MGR,AUTOLABEL,LIBRARY_SERIAL,RESETDRIVES FROM LIBRARIES ORDER BY LIBRARY_NAME",
+    columns:['LIBRARY_NAME','LIBRARY_TYPE','ACS_ID','PRIVATE_CATEGORY','SCRATCH_CATEGORY','EXTERNAL_MGR','SHARED','PRIMARY_LIB_MGR','AUTOLABEL','LIBRARY_SERIAL','RESETDRIVES'],
     outputFile:'doc_22_libraries.csv' },
 
   { id:'doc_23_drives', title:'Drives', section:'Storage',
     sql:"SELECT LIBRARY_NAME,DRIVE_NAME,DEVICE_TYPE,ONLINE,ELEMENT,CLEAN_FREQ,DRIVE_SERIAL,READ_FORMATS FROM DRIVES ORDER BY LIBRARY_NAME,DRIVE_NAME",
+    columns:['LIBRARY_NAME','DRIVE_NAME','DEVICE_TYPE','ONLINE','ELEMENT','CLEAN_FREQ','DRIVE_SERIAL','READ_FORMATS'],
     outputFile:'doc_23_drives.csv' },
 
   { id:'doc_24_paths', title:'Paths', section:'Storage',
     sql:"SELECT SOURCE_NAME,SOURCE_TYPE,DESTINATION_NAME,DESTINATION_TYPE,LIBRARY_NAME,NODE_NAME,DEVICE,ONLINE FROM PATHS ORDER BY SOURCE_TYPE,SOURCE_NAME",
+    columns:['SOURCE_NAME','SOURCE_TYPE','DESTINATION_NAME','DESTINATION_TYPE','LIBRARY_NAME','NODE_NAME','DEVICE','ONLINE'],
     outputFile:'doc_24_paths.csv' },
 
   { id:'hc_04_stgpool_util', title:'Storage Pool Utilisation', section:'Storage',
@@ -524,35 +531,43 @@ const ALL_QUERIES = [
 
   { id:'hc_05_vols_unavail', title:'Unavailable Volumes', section:'Storage',
     sql:"SELECT VOLUME_NAME,STGPOOL_NAME,DEVCLASS_NAME,STATUS,ACCESS FROM VOLUMES WHERE ACCESS='UNAVAILABLE' ORDER BY STGPOOL_NAME,VOLUME_NAME",
+    columns:['VOLUME_NAME','STGPOOL_NAME','DEVCLASS_NAME','STATUS','ACCESS'],
     outputFile:'hc_05_vols_unavail.csv' },
 
   { id:'hc_06_vols_readonly', title:'Read-only Volumes', section:'Storage',
     sql:"SELECT VOLUME_NAME,STGPOOL_NAME,DEVCLASS_NAME,STATUS,ACCESS FROM VOLUMES WHERE ACCESS='READONLY' ORDER BY STGPOOL_NAME,VOLUME_NAME",
+    columns:['VOLUME_NAME','STGPOOL_NAME','DEVCLASS_NAME','STATUS','ACCESS'],
     outputFile:'hc_06_vols_readonly.csv' },
 
   { id:'hc_07_tape_errors', title:'Tape Read/Write Errors', section:'Storage',
     sql:"SELECT VOLUME_NAME,STGPOOL_NAME,DEVCLASS_NAME,WRITE_ERRORS,READ_ERRORS,ERROR_STATE,STATUS FROM VOLUMES WHERE DEVCLASS_NAME<>'DISK' AND (WRITE_ERRORS>=1 OR READ_ERRORS>=1) ORDER BY WRITE_ERRORS DESC,READ_ERRORS DESC",
+    columns:['VOLUME_NAME','STGPOOL_NAME','DEVCLASS_NAME','WRITE_ERRORS','READ_ERRORS','ERROR_STATE','STATUS'],
     outputFile:'hc_07_tape_errors.csv' },
 
   { id:'hc_08_paths_offline', title:'Offline Paths', section:'Storage',
     sql:"SELECT SOURCE_NAME,SOURCE_TYPE,DESTINATION_NAME,DESTINATION_TYPE,LIBRARY_NAME,DEVICE,ONLINE FROM PATHS WHERE ONLINE='NO' ORDER BY SOURCE_NAME",
+    columns:['SOURCE_NAME','SOURCE_TYPE','DESTINATION_NAME','DESTINATION_TYPE','LIBRARY_NAME','DEVICE','ONLINE'],
     outputFile:'hc_08_paths_offline.csv' },
 
   { id:'hc_09_drives_offline', title:'Offline Drives', section:'Storage',
     sql:"SELECT LIBRARY_NAME,DRIVE_NAME,DEVICE_TYPE,ONLINE,DRIVE_SERIAL FROM DRIVES WHERE ONLINE='NO' ORDER BY LIBRARY_NAME,DRIVE_NAME",
+    columns:['LIBRARY_NAME','DRIVE_NAME','DEVICE_TYPE','ONLINE','DRIVE_SERIAL'],
     outputFile:'hc_09_drives_offline.csv' },
 
   // ── Volumes ───────────────────────────────────────────────────────────────
   { id:'doc_25_volumes_summary', title:'Volumes — Summary by Pool/Status', section:'Volumes',
     sql:"SELECT STGPOOL_NAME,DEVCLASS_NAME,STATUS,ACCESS,COUNT(*) AS VOLUME_COUNT FROM VOLUMES GROUP BY STGPOOL_NAME,DEVCLASS_NAME,STATUS,ACCESS ORDER BY STGPOOL_NAME,DEVCLASS_NAME,STATUS",
+    columns:['STGPOOL_NAME','DEVCLASS_NAME','STATUS','ACCESS','VOLUME_COUNT'],
     outputFile:'doc_25_volumes_summary.csv' },
 
   { id:'doc_26_disk_volumes', title:'Disk Volumes', section:'Volumes',
     sql:"SELECT VOLUME_NAME,STGPOOL_NAME,STATUS,ACCESS,CAST(EST_CAPACITY_MB/1024 AS DECIMAL(12,2)) AS SIZE_GB,CAST(PCT_UTILIZED AS DECIMAL(5,2)) AS PCT_UTIL FROM VOLUMES WHERE DEVCLASS_NAME='DISK' ORDER BY STGPOOL_NAME,VOLUME_NAME",
+    columns:['VOLUME_NAME','STGPOOL_NAME','STATUS','ACCESS','SIZE_GB','PCT_UTIL'],
     outputFile:'doc_26_disk_volumes.csv' },
 
   { id:'doc_27_libvols_summary', title:'Library Volumes — Count by Status', section:'Volumes',
     sql:"SELECT LIBRARY_NAME,STATUS,COUNT(*) AS VOL_COUNT FROM LIBVOLUMES GROUP BY LIBRARY_NAME,STATUS ORDER BY LIBRARY_NAME,STATUS",
+    columns:['LIBRARY_NAME','STATUS','VOL_COUNT'],
     outputFile:'doc_27_libvols_summary.csv' },
 
   { id:'doc_28_volhistory', title:'Volume History (30 days)', section:'Volumes',
@@ -575,6 +590,7 @@ const ALL_QUERIES = [
   // ── Replication ──────────────────────────────────────────────────────────
   { id:'doc_32_servers', title:'Defined Servers', section:'Replication',
     sql:"SELECT SERVER_NAME,HL_ADDRESS,LL_ADDRESS,NODE_NAME FROM SERVERS ORDER BY SERVER_NAME",
+    columns:['SERVER_NAME','HL_ADDRESS','LL_ADDRESS','NODE_NAME'],
     outputFile:'doc_32_servers.csv' },
 
   { id:'doc_33_repl_servers', title:'Replication Servers', section:'Replication', v8only:true, warnIfMissing:true,
@@ -583,6 +599,7 @@ const ALL_QUERIES = [
 
   { id:'doc_37_stgrules', title:'Storage/Replication Rules', section:'Replication', v8only:true, warnIfMissing:true,
     sql:"SELECT RULENAME,TGTPOOL,TGTSRV,TYPE,DELAY,MAXPROCESS,TGTTYPE,DURATION,STARTTIME,DESCRIPTION,ACTIVE,SRCPOOL,NODELIST,FSLIST,NAMETYPE,CODETYPE,LASTEXETIME,PCTUNUSED,AUDITTYPE,AUDITLEVEL,MAXSESSIONS,TRANSFERMETHOD FROM STGRULES ORDER BY RULENAME",
+    columns:['RULENAME','TGTPOOL','TGTSRV','TYPE','DELAY','MAXPROCESS','TGTTYPE','DURATION','STARTTIME','DESCRIPTION','ACTIVE','SRCPOOL','NODELIST','FSLIST','NAMETYPE','CODETYPE','LASTEXETIME','PCTUNUSED','AUDITTYPE','AUDITLEVEL','MAXSESSIONS','TRANSFERMETHOD'],
     outputFile:'doc_37_stgrules.csv' },
 
   { id:'hc_27_repl_stats', title:'Storage Pool Protection Stats (30 days)', section:'Replication',
@@ -592,10 +609,12 @@ const ALL_QUERIES = [
   // ── DR ───────────────────────────────────────────────────────────────────
   { id:'doc_34_drm_status', title:'DRM Status', section:'DR',
     sql:"SELECT PLANPREFIX,INSTRPREFIX,NONMOUNTNAME,COURIERNAME,VAULTNAME,DBBEXPIREDAYS,CHECKLABEL FROM DRMSTATUS",
+    columns:['PLANPREFIX','INSTRPREFIX','NONMOUNTNAME','COURIERNAME','VAULTNAME','DBBEXPIREDAYS','CHECKLABEL'],
     outputFile:'doc_34_drm_status.csv' },
 
   { id:'doc_35_drm_media', title:'DRM Media', section:'DR',
     sql:"SELECT VOLUME_NAME,STATE,LOCATION,STGPOOL_NAME,LIB_NAME,VOLTYPE FROM DRMEDIA ORDER BY STATE,VOLUME_NAME",
+    columns:['VOLUME_NAME','STATE','LOCATION','STGPOOL_NAME','LIB_NAME','VOLTYPE'],
     outputFile:'doc_35_drm_media.csv' },
 
   // ── Retention ────────────────────────────────────────────────────────────
@@ -676,6 +695,7 @@ const ALL_QUERIES = [
   // ── Scripts ───────────────────────────────────────────────────────────────
   { id:'doc_39_scripts', title:'Server Scripts', section:'Scripts',
     sql:"SELECT NAME,LINE,COMMAND FROM SCRIPTS ORDER BY NAME,LINE",
+    columns:['NAME','LINE','COMMAND'],
     outputFile:'doc_39_scripts.csv' },
 
   // ── Schema Discovery ──────────────────────────────────────────────────────
@@ -1338,6 +1358,11 @@ function parseDsmOutput(text) {
     if (/^Session (established|closed)/i.test(t)) continue;
     if (/^Protecting IBM/i.test(t)) continue;
     if (/^SP SERVER>/i.test(t)) continue;
+    // dsmadmc administrative-client banner lines (tab/space separated, version-independent)
+    if (/^Command\s+Line\s+Administrative\s+Interface/i.test(t)) continue;
+    if (/^\(c\)\s+Copyright\s+IBM\s+Corp\b/i.test(t)) continue;
+    if (/^Server\s+Version\s+\d+\s+Release\s+\d+\s+Level\s+\d/i.test(t)) continue;
+    if (/^Server\s+date\/time:/i.test(t)) continue;
 
     const fields = parseCsvLine(t);
     if (!headers) { headers = fields; }
@@ -1650,6 +1675,32 @@ function updateReportStats() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// XML CHARACTER SANITIZATION
+// Removes characters forbidden by XML 1.0 before values reach worksheet XML.
+// Allowed by XML 1.0: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+// This function must be applied BEFORE xmlEscape, not instead of it.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Strip characters forbidden by XML 1.0 from str.
+ * Preserves tab (U+0009), line feed (U+000A), carriage return (U+000D),
+ * all ordinary Unicode text, and valid supplementary-plane characters.
+ * Removes: C0 controls (except TAB/LF/CR), DEL (U+007F), noncharacters
+ * U+FFFE/U+FFFF, and isolated UTF-16 surrogate code units.
+ */
+function sanitizeXmlChars(str) {
+  return String(str)
+    // Remove C0 controls except TAB (#x9), LF (#xA), CR (#xD), and DEL (#x7F)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    // Remove XML 1.0 noncharacters U+FFFE and U+FFFF
+    .replace(/[\uFFFE\uFFFF]/g, '')
+    // Remove isolated high surrogates (not followed by a low surrogate)
+    // and isolated low surrogates (not preceded by a high surrogate).
+    // Valid surrogate pairs (representing supplementary characters) are preserved.
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // XLSX REPORT GENERATION  — self-contained XLSX writer (no external library)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1816,13 +1867,14 @@ const XLSX = (() => {
     }
 
     function xfXml(xf) {
+      const wrapTextAttrs = xf.wrapText ? ' wrapText="1" vertical="top"' : '';
       return [
         `<xf numFmtId="0" fontId="${xf.fontId}" fillId="${xf.fillId}" borderId="${xf.borderId}" xfId="${xf.xfId}"`,
         xf.applyFont ? ' applyFont="1"' : '',
         xf.applyFill ? ' applyFill="1"' : '',
-        xf.applyAlignment ? ' applyAlignment="1"' : '',
+        ' applyAlignment="1"',
         '>',
-        xf.applyAlignment ? '<alignment wrapText="1" vertical="top"/>' : '',
+        `<alignment horizontal="left"${wrapTextAttrs}/>`,
         '</xf>'
       ].join('');
     }
@@ -1845,7 +1897,7 @@ const XLSX = (() => {
   }
 
   function textNode(text) {
-    const value = String(text);
+    const value = sanitizeXmlChars(String(text));
     const preserve = /^[\s]|[\s]$|[\r\n\t]/.test(value);
     return `<t${preserve ? ' xml:space="preserve"' : ''}>${xmlEscape(value)}</t>`;
   }
@@ -1907,7 +1959,7 @@ const XLSX = (() => {
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       `<workbook xmlns="${XMLNS_MAIN}" xmlns:r="${XMLNS_REL}">`,
       '<sheets>',
-      sheetNames.map((name, i) => `<sheet name="${xmlEscape(name)}" sheetId="${i + 1}" r:id="rId${i + SHEET_REL_ID_OFFSET}"/>`).join(''),
+      sheetNames.map((name, i) => `<sheet name="${xmlEscape(sanitizeXmlChars(name))}" sheetId="${i + 1}" r:id="rId${i + SHEET_REL_ID_OFFSET}"/>`).join(''),
       '</sheets>',
       '</workbook>'
     ].join('');
@@ -1962,7 +2014,7 @@ const XLSX = (() => {
       '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">',
       '<Application>StorageTools Web Helper</Application>',
       `<HeadingPairs><vt:vector size="2" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>${sheetNames.length}</vt:i4></vt:variant></vt:vector></HeadingPairs>`,
-      `<TitlesOfParts><vt:vector size="${sheetNames.length}" baseType="lpstr">${sheetNames.map(name => `<vt:lpstr>${xmlEscape(name)}</vt:lpstr>`).join('')}</vt:vector></TitlesOfParts>`,
+      `<TitlesOfParts><vt:vector size="${sheetNames.length}" baseType="lpstr">${sheetNames.map(name => `<vt:lpstr>${xmlEscape(sanitizeXmlChars(name))}</vt:lpstr>`).join('')}</vt:vector></TitlesOfParts>`,
       '</Properties>'
     ].join('');
   }
@@ -2175,7 +2227,8 @@ function applyTrackedColumnWidths(ws) {
 function ws_set(ws, r, c, value, style) {
   const addr = XLSX.utils.encode_cell({ r, c });
   const isNum = typeof value === 'number';
-  const displayValue = value === null || value === undefined ? '' : value;
+  const rawValue = value === null || value === undefined ? '' : value;
+  const displayValue = isNum ? rawValue : sanitizeXmlChars(String(rawValue));
   let cellStyle = style || STYLES.dataEven;
   if (typeof displayValue === 'string' && (displayValue.includes('\n') || displayValueLineWidth(displayValue) > COL_WIDTH_MAX) &&
       !(cellStyle && cellStyle.alignment && cellStyle.alignment.wrapText)) {
@@ -2213,27 +2266,31 @@ function addQueryBlock(ws, startRow, query, data) {
     ws_set(ws, r, 0, `File not imported: ${query.outputFile}`, STYLES.notImp);
     r++;
   } else if (!data.rows || data.rows.length === 0) {
-    if (data.headers && data.headers.length > 0) {
-      data.headers.forEach((h, c) => ws_set(ws, r, c, h, STYLES.columnHeader));
-      ws_updateRef(ws, r, data.headers.length - 1);
+    // Use imported headers, falling back to query.columns metadata for RC_NOTFOUND cases
+    const emptyHdrs = (data.headers && data.headers.length > 0) ? data.headers : (query.columns || null);
+    if (emptyHdrs && emptyHdrs.length > 0) {
+      emptyHdrs.forEach((h, c) => ws_set(ws, r, c, h, STYLES.columnHeader));
+      ws_updateRef(ws, r, emptyHdrs.length - 1);
       r++;
     }
     ws_set(ws, r, 0, 'No rows returned', STYLES.noData);
     r++;
   } else {
-    const headers = data.headers.length > 0 ? data.headers : ['(data)'];
+    const headers = data.headers.length > 0 ? data.headers : (query.columns || ['(data)']);
     headers.forEach((h, c) => ws_set(ws, r, c, h, STYLES.columnHeader));
     ws_updateRef(ws, r, headers.length - 1);
     r++;
 
     data.rows.forEach((row, i) => {
       const rowStyle = i % 2 === 0 ? STYLES.dataEven : STYLES.dataOdd;
-      row.forEach((val, c) => {
+      const numCols = Math.max(row.length, headers.length);
+      for (let c = 0; c < numCols; c++) {
+        const val = c < row.length ? row[c] : '';
         const num = parseFloat(val);
         const v   = (!isNaN(num) && val !== null) ? num : (val || '');
         ws_set(ws, r, c, v, rowStyle);
-      });
-      ws_updateRef(ws, r, Math.max(0, row.length - 1));
+      }
+      ws_updateRef(ws, r, Math.max(0, numCols - 1));
       r++;
     });
   }
