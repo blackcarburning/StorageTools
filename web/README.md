@@ -163,7 +163,7 @@ Server Version 8    Release 1    Level 27.000
 Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14
 ```
 
-StorageTools automatically filters these banner lines (case-insensitively, regardless of whitespace or version numbers) before header detection and data parsing. The first real comma-delimited row after banner and ANS-message filtering is always used as the column header row.
+StorageTools automatically filters these banner lines (case-insensitively, regardless of whitespace, quoting, BOM/control-character prefixes, or version numbers) before header detection and data parsing. If the server emits a trustworthy header row, StorageTools keeps it. If the output contains only data rows, StorageTools falls back to deterministic column headers derived from the query `SELECT` list (and schema metadata for `SELECT *` queries such as `DBSPACE`). Empty-result sheets still retain their expected column headings.
 
 ---
 
