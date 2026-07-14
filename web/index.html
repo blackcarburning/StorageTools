@@ -2545,7 +2545,7 @@ function headerLineWidth(value) {
     let w = 0;
     for (const ch of Array.from(line)) {
       const cp = ch.codePointAt(0);
-      if (cp > 127) { w += 1.2; continue; }
+      if (cp > 127) { w += 1.2; continue; } // non-ASCII: generous fallback to avoid clipping CJK/accented chars
       if (ch === 'W' || ch === 'M') { w += 1.4; continue; }
       if (ch === 'I' || ch === 'J') { w += 0.6; continue; }
       if (ch >= 'A' && ch <= 'Z') { w += 1.1; continue; }

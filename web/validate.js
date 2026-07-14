@@ -597,7 +597,7 @@ if (typeof buildSheet !== 'function' || typeof buildCoverSheet !== 'function' ||
     buildSheet({ SheetNames: wbC.SheetNames, Sheets: wbC.Sheets, utils: { book_append_sheet: addSheetC } }, 'Server');
     const wsC = wbC.Sheets.Server;
     // Column 2: header 'Short\nLonger heading line' — longest line 'Longer heading line' (19 chars)
-    // headerLineWidth = ceil(L=1.1 + 18×1.0) = ceil(19.1) = 20; data 'z' (1 char) — heading wins; 20 + 2 = 22
+    // headerLineWidth = ceil(L(1.1) + 18 others×1.0) = ceil(19.1) = 20; data 'z' (1 char) — heading wins; 20 + 2 = 22
     const wC2 = wsC && wsC['!cols'] && wsC['!cols'][2] ? wsC['!cols'][2].wch : 0;
     if (wC2 === 22) ok('XLSX widths: multiline headings use their longest line');
     else fail(`XLSX widths: expected multiline heading width 22, got ${wC2}`);
