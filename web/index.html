@@ -2536,10 +2536,30 @@ function displayValueLineWidth(value) {
   return longest;
 }
 
-function trackColumnWidth(ws, c, value) {
+function headerLineWidth(value) {
+  if (value === null || value === undefined) return 0;
+  const text = String(value);
+  const lines = text.split(/\r\n|\r|\n/);
+  let longest = 0;
+  for (const line of lines) {
+    let w = 0;
+    for (const ch of Array.from(line)) {
+      const cp = ch.codePointAt(0);
+      if (cp > 127) { w += 1.2; continue; } // non-ASCII: generous fallback to avoid clipping CJK/accented chars
+      if (ch === 'W' || ch === 'M') { w += 1.4; continue; }
+      if (ch === 'I' || ch === 'J') { w += 0.6; continue; }
+      if (ch >= 'A' && ch <= 'Z') { w += 1.1; continue; }
+      w += 1.0;
+    }
+    if (w > longest) longest = w;
+  }
+  return Math.ceil(longest);
+}
+
+function trackColumnWidth(ws, c, value, isHeader) {
   const tracker = ws && ws['!widthTracker'];
   if (!tracker) return;
-  const width = displayValueLineWidth(value);
+  const width = isHeader ? headerLineWidth(value) : displayValueLineWidth(value);
   if (!tracker.widths[c] || width > tracker.widths[c]) tracker.widths[c] = width;
 }
 
@@ -2569,7 +2589,8 @@ function ws_set(ws, r, c, value, style) {
     cellStyle = { ...cellStyle, alignment: { wrapText: true } };
   }
   ws[addr] = { v: displayValue, t: isNum ? 'n' : 's', s: cellStyle };
-  trackColumnWidth(ws, c, displayValue);
+  const isHeader = style === STYLES.columnHeader || style === STYLES.idxHeader;
+  trackColumnWidth(ws, c, displayValue, isHeader);
   return addr;
 }
 
