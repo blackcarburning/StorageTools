@@ -1578,6 +1578,42 @@ function normalizedRecordText(fields) {
   return fields.map(normalizeImportedField).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
+function normalizeNoiseFragment(value) {
+  return normalizeImportedField(value)
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizedNoiseFragments(fields) {
+  return fields.map(normalizeNoiseFragment).filter(Boolean);
+}
+
+function isIbmCopyrightRecord(fields) {
+  const fragments = normalizedNoiseFragments(fields);
+  if (fragments.length === 0) return false;
+
+  const fullPattern = /^\(\s*c\s*\)\s*copyright\s+ibm\s+corp\.?\s+(?:19|20)\d{2}(?:\s*[,;:/-]?\s*(?:19|20)\d{2})?$/i;
+  const prefixPattern = /^\(\s*c\s*\)\s*copyright\s+ibm\s+corp\.?\s+(?:19|20)\d{2}$/i;
+  const yearSuffixPattern = /^[,;:/-]?\s*(?:19|20)\d{2}$/i;
+
+  const joined = fragments.join(' ').replace(/\s+/g, ' ').trim();
+  if (fullPattern.test(joined)) return true;
+  if (fragments.some(fragment => fullPattern.test(fragment))) return true;
+
+  for (let i = 0; i < fragments.length - 1; i++) {
+    if (prefixPattern.test(fragments[i]) && yearSuffixPattern.test(fragments[i + 1])) return true;
+  }
+  return false;
+}
+
+function isNoMatchRecord(fields) {
+  const fragments = normalizedNoiseFragments(fields);
+  if (fragments.length === 0) return false;
+  const text = fragments.join(' ').replace(/\s+/g, ' ').trim();
+  return /^ANR2034E\b\s*SELECT\b\s*[:\-]?\s*NO\s+MATCH\s+FOUND\s+USING\s+THIS\s+CRITERIA\b\s*[.!]*$/i.test(text);
+}
+
 /**
  * Parse dsmadmc -commadelimited output.
  * Returns { headers: string[], rows: string[][] }
@@ -1587,6 +1623,8 @@ function normalizedRecordText(fields) {
 function isAdministrativeNoiseRecord(fields) {
   const text = normalizedRecordText(fields);
   if (!text) return true;
+  if (isIbmCopyrightRecord(fields)) return true;
+  if (isNoMatchRecord(fields)) return true;
   return (
     /^\d+\s+row\(s\)\s+(?:affected|returned)\.?$/i.test(text) ||
     /^ANS[A-Z]?\d+[IWES]\b/i.test(text) ||
@@ -1595,7 +1633,6 @@ function isAdministrativeNoiseRecord(fields) {
     /^Protecting IBM\b/i.test(text) ||
     /^SP SERVER>/i.test(text) ||
     /^Command\s+Line\s+Administrative\s+Interface\s*-\s*Version\s+\S+\s+Release\s+\S+\s+Level\s+\S+$/i.test(text) ||
-    /^\(c\)\s*Copyright\s+IBM\s+Corp\.?\s+(?:199\d|20[0-2]\d|2030)(?:\s+(?:199\d|20[0-2]\d|2030))?$/i.test(text) ||
     /^Server\s+Version\s+\S+\s+Release\s+\S+\s+Level\s+\S+$/i.test(text) ||
     /^Server\s+date\/time:\s*\S.*(?:\s+Last\s+access:\s*\S.*)?$/i.test(text)
   );
@@ -1626,6 +1663,9 @@ function parseDsmOutput(text, query) {
   for (const line of lines) {
     if (!line || !line.trim()) continue;
     const fields = parseCsvLine(line).map(normalizeImportedField);
+    if (isNoMatchRecord(fields)) {
+      continue;
+    }
     if (isAdministrativeNoiseRecord(fields)) {
       if (/^\d+\s+row\(s\)\s+(?:affected|returned)\.?$/i.test(normalizedRecordText(fields))) break;
       continue;
@@ -1633,7 +1673,10 @@ function parseDsmOutput(text, query) {
     records.push(fields);
   }
 
-  if (records.length === 0) return { headers: [], rows: [] };
+  if (records.length === 0) {
+    if (expectedHeaders && expectedHeaders.length > 0) return { headers: expectedHeaders.slice(), rows: [] };
+    return { headers: [], rows: [] };
+  }
 
   if (looksLikeEmittedHeader(records[0], expectedHeaders)) {
     return { headers: records[0], rows: records.slice(1) };

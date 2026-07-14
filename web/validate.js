@@ -892,6 +892,9 @@ if (typeof parseDsmOutput !== 'function') {
     '\ufeff\x01Command Line Administrative Interface - Version 8\tRelease 1\tLevel 27.0\n(c) Copyright IBM Corp. 1990\t2025\nServer Version 8\tRelease 1\tLevel 27.000\nServer date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14\nA,B\nx,y',
     '"Command Line Administrative Interface - Version 8","Release 1","Level 27.0"\n"(c) Copyright IBM Corp. 1990","2025"\n"Server Version 8","Release 1","Level 27.000"\n"Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14"\nA,B\nx,y',
     '  Command Line Administrative Interface - Version 8   Release 1   Level 27.0  \n  (c) Copyright IBM Corp. 1990   2025  \n  Server Version 8   Release 1   Level 27.000  \n  Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14  \nA,B\nx,y',
+    'A,B\n"(c) Copyright IBM Corp. 1990","2025"\nx,y',
+    'A,B\n(c) Copyright IBM Corp. 1990,2025\nx,y',
+    'A,B\n\ufeff\x01(c)\tCopyright IBM Corp. 1990\t,\t2025\nx,y',
   ];
   const variantsOk = bannerVariants.every(text => {
     const parsed = parseDsmOutput(text, { columns: ['A', 'B'] });
@@ -899,6 +902,27 @@ if (typeof parseDsmOutput !== 'function') {
   });
   if (variantsOk) ok('parseDsmOutput: tab/comma/quoted/BOM/control banner variants filtered');
   else fail('parseDsmOutput: one or more banner variants still leaked into rows');
+
+  const noMatchVariants = [
+    'ANR2034E SELECT: No match found using this criteria.',
+    '"ANR2034E SELECT: No match found using this criteria."',
+    'anr2034e    select :   no    match found using this criteria .',
+    '"ANR2034E SELECT: No match found","using this criteria."',
+    '\ufeff\x01ANR2034E SELECT:\tNo match found using this criteria.',
+  ];
+  const noMatchOk = noMatchVariants.every((variant) => {
+    const parsed = parseDsmOutput(variant, { columns: ['COL_A', 'COL_B'] });
+    return parsed.headers.join(',') === 'COL_A,COL_B' && parsed.rows.length === 0;
+  });
+  if (noMatchOk) ok('parseDsmOutput: ANR2034E no-match variants normalized to empty result with expected headers');
+  else fail('parseDsmOutput: ANR2034E no-match variant leaked into data');
+
+  const noMatchWithHeader = parseDsmOutput([
+    'A,B',
+    'ANR2034E SELECT: No match found using this criteria.',
+  ].join('\n'), { columns: ['A', 'B'] });
+  if (noMatchWithHeader.headers.join(',') === 'A,B' && noMatchWithHeader.rows.length === 0) ok('parseDsmOutput: no-match keeps emitted header and no data rows');
+  else fail(`parseDsmOutput: no-match header handling failed: ${JSON.stringify(noMatchWithHeader)}`);
 
   // Ensure "Server Version" in a data column is NOT filtered
   const withServerVer = [
@@ -963,6 +987,28 @@ if (typeof parseDsmOutput !== 'function') {
   const r8 = parseDsmOutput('');
   if (r8.headers.length === 0 && r8.rows.length === 0) ok('parseDsmOutput: empty input returns empty result');
   else fail(`parseDsmOutput: empty input should return empty, got ${JSON.stringify(r8)}`);
+
+  const nonNoMatchAnr = parseDsmOutput([
+    'A,B',
+    'ANR9999E Unexpected database error,DETAILS',
+  ].join('\n'), { columns: ['A', 'B'] });
+  if (nonNoMatchAnr.rows.length === 1 && /^ANR9999E/i.test(nonNoMatchAnr.rows[0][0])) ok('parseDsmOutput: non-no-match ANR messages remain visible');
+  else fail(`parseDsmOutput: non-no-match ANR should remain visible, got ${JSON.stringify(nonNoMatchAnr)}`);
+
+  const sharedFixtureLf = [
+    'Command Line Administrative Interface - Version 8\tRelease 1\tLevel 27.0',
+    '(c) Copyright IBM Corp. 1990\t2025',
+    'Server Version 8\tRelease 1\tLevel 27.000',
+    'Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14',
+    'A,B',
+    'ANR2034E SELECT: No match found using this criteria.',
+    '1 row(s) affected.',
+  ].join('\n');
+  const sharedFixtureCrlf = sharedFixtureLf.replace(/\n/g, '\r\n');
+  const parsedLf = parseDsmOutput(sharedFixtureLf, { columns: ['A', 'B'] });
+  const parsedCrlf = parseDsmOutput(sharedFixtureCrlf, { columns: ['A', 'B'] });
+  if (JSON.stringify(parsedLf) === JSON.stringify(parsedCrlf)) ok('parseDsmOutput: SH/LF and CMD/CRLF fixtures parse identically');
+  else fail(`parseDsmOutput: LF/CRLF mismatch: ${JSON.stringify(parsedLf)} vs ${JSON.stringify(parsedCrlf)}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1126,6 +1172,44 @@ if (typeof addQueryBlock !== 'function') {
   const leakedBanner = Object.values(ws6).some(cell => cell && cell.v && /Command Line Administrative Interface|Server Version 8|Copyright IBM/i.test(String(cell.v)));
   if (!leakedBanner) ok('addQueryBlock: fixture worksheet contains no client/version banner text');
   else fail('addQueryBlock: banner text leaked into fixture worksheet cells');
+
+  const noMatchQuery = { id: 'test_nomatch', title: 'NoMatch', outputFile: 'no_match.csv', columns: ['A', 'B'] };
+  const ws7 = makeWs();
+  const parsedNoMatch = parseDsmOutput('ANR2034E SELECT: No match found using this criteria.', noMatchQuery);
+  addQueryBlock(ws7, 0, noMatchQuery, parsedNoMatch);
+  const leakedNoMatchCell = Object.values(ws7).some(cell => cell && cell.v && /ANR2034E|No match found using this criteria/i.test(String(cell.v)));
+  if (!leakedNoMatchCell) ok('addQueryBlock: no-match message text does not appear in worksheet cells');
+  else fail('addQueryBlock: raw no-match message leaked into worksheet cells');
+
+  if (typeof XLSX !== 'undefined') {
+    function unzipNoMatchXml(uint8) {
+      const data = Buffer.from(uint8);
+      const out = new Map();
+      let p = 0;
+      while (p + 30 <= data.length) {
+        if (data.readUInt32LE(p) !== 0x04034b50) break;
+        const comp = data.readUInt16LE(p + 8);
+        const size = data.readUInt32LE(p + 22);
+        const nameLen = data.readUInt16LE(p + 26);
+        const extraLen = data.readUInt16LE(p + 28);
+        const nameStart = p + 30;
+        const dataStart = nameStart + nameLen + extraLen;
+        const name = data.slice(nameStart, nameStart + nameLen).toString('utf8');
+        if (comp !== 0) break;
+        out.set(name, data.slice(dataStart, dataStart + size).toString('utf8'));
+        p = dataStart + size;
+      }
+      return out;
+    }
+    const wbNoMatch = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbNoMatch, ws7, 'NoMatch');
+    const bytesNoMatch = XLSX.write(wbNoMatch, { bookType: 'xlsx', type: 'array' });
+    const sheetNoMatchXml = unzipNoMatchXml(bytesNoMatch).get('xl/worksheets/sheet1.xml') || '';
+    if (!/ANR2034E|No match found using this criteria/i.test(sheetNoMatchXml)) ok('addQueryBlock: generated worksheet XML excludes raw no-match IBM text');
+    else fail('addQueryBlock: generated worksheet XML still contains raw no-match IBM text');
+  } else {
+    fail('XLSX not available for no-match XML leakage check');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1139,6 +1223,11 @@ if (readme.includes('banner') || readme.includes('administrative-client') || rea
   ok('README includes troubleshooting note for CLI banner filtering');
 } else {
   fail('README missing troubleshooting note for CLI banner filtering');
+}
+if (readme.includes('ANR2034E') || readme.includes('No match found')) {
+  ok('README includes troubleshooting note for no-match normalization');
+} else {
+  fail('README missing troubleshooting note for ANR2034E/no-match normalization');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
