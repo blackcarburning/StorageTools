@@ -1867,14 +1867,14 @@ const XLSX = (() => {
     }
 
     function xfXml(xf) {
-      const wrapAttrs = xf.wrapText ? ' wrapText="1" vertical="top"' : '';
+      const wrapTextAttrs = xf.wrapText ? ' wrapText="1" vertical="top"' : '';
       return [
         `<xf numFmtId="0" fontId="${xf.fontId}" fillId="${xf.fillId}" borderId="${xf.borderId}" xfId="${xf.xfId}"`,
         xf.applyFont ? ' applyFont="1"' : '',
         xf.applyFill ? ' applyFill="1"' : '',
         ' applyAlignment="1"',
         '>',
-        `<alignment horizontal="left"${wrapAttrs}/>`,
+        `<alignment horizontal="left"${wrapTextAttrs}/>`,
         '</xf>'
       ].join('');
     }
@@ -2287,7 +2287,7 @@ function addQueryBlock(ws, startRow, query, data) {
       for (let c = 0; c < numCols; c++) {
         const val = c < row.length ? row[c] : '';
         const num = parseFloat(val);
-        const v   = (!isNaN(num) && val !== null && val !== '') ? num : (val || '');
+        const v   = (!isNaN(num) && val !== null) ? num : (val || '');
         ws_set(ws, r, c, v, rowStyle);
       }
       ws_updateRef(ws, r, Math.max(0, numCols - 1));

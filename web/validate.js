@@ -1027,7 +1027,7 @@ if (typeof addQueryBlock !== 'function') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('23. README troubleshooting notes for sanitization and banner filtering');
+section('24. README troubleshooting notes for sanitization and banner filtering');
 if (readme.includes('control character') || readme.includes('XML') || readme.includes('illegal')) {
   ok('README includes troubleshooting note for XML/control-character issues');
 } else {
