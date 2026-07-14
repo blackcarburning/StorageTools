@@ -47,7 +47,7 @@ let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatS
     XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
     sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
     parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue,
-    deriveExpectedColumnsFromSql, buildImportedState;
+    deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES;
 try {
   const elements = new Map();
   const makeEl = (value = '') => ({
@@ -100,7 +100,7 @@ try {
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
     'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState };`
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES };`
   );
   const result = sandbox(
     mockDoc,
@@ -119,7 +119,7 @@ try {
      buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
      sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
      parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue,
-     deriveExpectedColumnsFromSql, buildImportedState } = result);
+     deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES } = result);
 } catch (err) {
   fail(`Could not evaluate index.html script: ${err.message}`);
   process.exit(1);
@@ -559,8 +559,8 @@ if (typeof buildSheet !== 'function' || typeof buildCoverSheet !== 'function' ||
     else fail(`XLSX widths: expected multiline width 26, got ${w1}`);
 
     const w2 = wsA && wsA['!cols'] && wsA['!cols'][2] ? wsA['!cols'][2].wch : 0;
-    if (w2 === 23) ok('XLSX widths: header text contributes to column width');
-    else fail(`XLSX widths: expected header-driven width 23, got ${w2}`);
+    if (w2 === 24) ok('XLSX widths: header text contributes to column width');
+    else fail(`XLSX widths: expected header-driven width 24, got ${w2}`);
 
     STATE.imported[serverQuery.outputFile] = {
       name: serverQuery.outputFile,
@@ -597,10 +597,53 @@ if (typeof buildSheet !== 'function' || typeof buildCoverSheet !== 'function' ||
     buildSheet({ SheetNames: wbC.SheetNames, Sheets: wbC.Sheets, utils: { book_append_sheet: addSheetC } }, 'Server');
     const wsC = wbC.Sheets.Server;
     // Column 2: header 'Short\nLonger heading line' — longest line 'Longer heading line' (19 chars)
-    // data 'z' (1 char) — heading wins; max(19, 1) + 2 padding = 21
+    // headerLineWidth = ceil(L=1.1 + 18×1.0) = ceil(19.1) = 20; data 'z' (1 char) — heading wins; 20 + 2 = 22
     const wC2 = wsC && wsC['!cols'] && wsC['!cols'][2] ? wsC['!cols'][2].wch : 0;
-    if (wC2 === 21) ok('XLSX widths: multiline headings use their longest line');
-    else fail(`XLSX widths: expected multiline heading width 21, got ${wC2}`);
+    if (wC2 === 22) ok('XLSX widths: multiline headings use their longest line');
+    else fail(`XLSX widths: expected multiline heading width 22, got ${wC2}`);
+
+    // ── headerLineWidth direct tests ──────────────────────────────────────
+    if (typeof headerLineWidth === 'function') {
+      // Bold uppercase wider than raw char count
+      const adminNameRaw = Array.from('ADMIN_NAME').length;
+      const adminNameEst = headerLineWidth('ADMIN_NAME');
+      if (adminNameEst > adminNameRaw) ok('headerLineWidth: bold uppercase wider than raw char count');
+      else fail(`headerLineWidth: ADMIN_NAME — expected > ${adminNameRaw}, got ${adminNameEst}`);
+
+      // Administrators screenshot headers all meet or exceed raw char count
+      const adminHeaders = ['ADMIN_NAME', 'LASTACC_TIME', 'PWSET_TIME', 'CONTACT', 'LOCKED',
+                            'PW_CASE_SENSITIVE', 'INVALID_PW_COUNT', 'SYSTEM_PRIV', 'POLICY_PRIV'];
+      const underestimated = adminHeaders.filter(h => headerLineWidth(h) < Array.from(h).length);
+      if (underestimated.length === 0) ok('headerLineWidth: all Administrators screenshot headers meet raw-char minimum');
+      else fail(`headerLineWidth: headers underestimated: ${underestimated.join(', ')}`);
+
+      // Data value longer than heading — data wins (check tracker directly via addQueryBlock)
+      const wsWin = { '!widthTracker': { widths: [], minWch: 8, maxWch: 80 } };
+      addQueryBlock(wsWin, 0, { id: 'tw', title: 'T', outputFile: 't.csv' }, {
+        headers: ['ID'],
+        rows: [['this is a much longer data value']], // 32 raw chars; headerLineWidth('ID') = 2
+      });
+      const rawW0 = wsWin['!widthTracker'] && wsWin['!widthTracker'].widths[0];
+      if (rawW0 === 32) ok('headerLineWidth: longer data value wins over shorter heading');
+      else fail(`headerLineWidth: expected raw data-wins 32, got ${rawW0}`);
+
+      // Exactly 2 units of padding after maximum (w1 = 26 = 24-char longest data line + 2)
+      if (w1 - 24 === 2) ok('headerLineWidth: exactly 2 units of padding applied after maximum');
+      else fail(`headerLineWidth: expected 2-unit padding (24+2=26), got difference ${w1 - 24}`);
+
+      // Multiline heading uses longest line
+      const mlEst = headerLineWidth('Short\nLonger heading line');
+      const singleEst = headerLineWidth('Longer heading line');
+      if (mlEst === singleEst) ok('headerLineWidth: multiline picks longest line');
+      else fail(`headerLineWidth: multiline ${mlEst} should equal single longest-line ${singleEst}`);
+
+      // Ordinary data-only column width unchanged (non-header style)
+      // w1 = 26 (data 'this is the longest line' = 24 raw + 2 padding), same as before
+      if (w1 === 26) ok('headerLineWidth: non-header data cells still use raw character count');
+      else fail(`headerLineWidth: expected non-header data width 26, got ${w1}`);
+    } else {
+      fail('headerLineWidth not exported');
+    }
   }
 
   STATE.imported = {};
