@@ -769,7 +769,7 @@ function splitSqlTopLevel(text, separator) {
     }
     if (ch === '\'' || ch === '"') { quote = ch; current += ch; continue; }
     if (ch === '(') { depth++; current += ch; continue; }
-    if (ch === ')') { depth = Math.max(0, depth - 1); current += ch; continue; }
+    if (ch === ')') { if (depth > 0) depth--; current += ch; continue; }
     if (depth === 0 && ch === separator) {
       parts.push(current.trim());
       current = '';
@@ -797,7 +797,7 @@ function findTopLevelKeyword(sql, keyword, fromIndex) {
     }
     if (ch === '\'' || ch === '"') { quote = ch; continue; }
     if (ch === '(') { depth++; continue; }
-    if (ch === ')') { depth = Math.max(0, depth - 1); continue; }
+    if (ch === ')') { if (depth > 0) depth--; continue; }
     if (depth !== 0) continue;
     if (upper.slice(i, i + needle.length) === needle) {
       const prev = i === 0 ? ' ' : upper[i - 1];
