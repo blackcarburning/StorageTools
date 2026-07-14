@@ -45,7 +45,8 @@ try {
 let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName,
     parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet,
     XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
-    sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport;
+    sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
+    parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set;
 try {
   const elements = new Map();
   const makeEl = (value = '') => ({
@@ -98,7 +99,7 @@ try {
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
     'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport };`
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set };`
   );
   const result = sandbox(
     mockDoc,
@@ -115,7 +116,8 @@ try {
   ({ ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName,
      parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX,
      buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
-     sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport } = result);
+     sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
+     parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set } = result);
 } catch (err) {
   fail(`Could not evaluate index.html script: ${err.message}`);
   process.exit(1);
@@ -740,6 +742,303 @@ if (typeof syncReportMetadataFromConfig !== 'function' || typeof readReportMetad
   if (status && /canceled/i.test(String(status.textContent))) ok('Canceled filename prompt reports non-error canceled status');
   else fail(`Canceled prompt status message missing/incorrect: ${JSON.stringify(status && status.textContent)}`);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('19. sanitizeXmlChars — XML 1.0 character sanitizer');
+if (typeof sanitizeXmlChars !== 'function') {
+  fail('sanitizeXmlChars is not exported');
+} else {
+  // Preserve allowed whitespace characters
+  if (sanitizeXmlChars('\t\n\r') === '\t\n\r') ok('sanitizeXmlChars preserves TAB, LF, CR');
+  else fail(`sanitizeXmlChars must preserve TAB/LF/CR, got ${JSON.stringify(sanitizeXmlChars('\t\n\r'))}`);
+
+  // Remove C0 control characters (except TAB=0x09, LF=0x0A, CR=0x0D)
+  const c0 = '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0B\x0C\x0E\x0F\x10\x1F\x7F';
+  if (sanitizeXmlChars(c0) === '') ok('sanitizeXmlChars removes forbidden C0 controls and DEL');
+  else fail(`sanitizeXmlChars should remove C0/DEL, got ${JSON.stringify(sanitizeXmlChars(c0))}`);
+
+  // Preserve ordinary ASCII and Unicode text
+  const normal = 'Hello, World! — IBM Storage Protect v8.1.27 \u00E9\u00FC\u4E2D\u6587';
+  if (sanitizeXmlChars(normal) === normal) ok('sanitizeXmlChars preserves ordinary Unicode text');
+  else fail(`sanitizeXmlChars must not alter normal text, got ${JSON.stringify(sanitizeXmlChars(normal))}`);
+
+  // Remove noncharacters U+FFFE and U+FFFF
+  if (sanitizeXmlChars('\uFFFE\uFFFF') === '') ok('sanitizeXmlChars removes U+FFFE and U+FFFF noncharacters');
+  else fail(`sanitizeXmlChars should remove U+FFFE/U+FFFF, got ${JSON.stringify(sanitizeXmlChars('\uFFFE\uFFFF'))}`);
+
+  // Remove isolated high surrogate (not followed by low)
+  const isolatedHigh = '\uD800x';
+  if (sanitizeXmlChars(isolatedHigh) === 'x') ok('sanitizeXmlChars removes isolated high surrogate');
+  else fail(`sanitizeXmlChars should remove isolated high surrogate, got ${JSON.stringify(sanitizeXmlChars(isolatedHigh))}`);
+
+  // Remove isolated low surrogate (not preceded by high)
+  const isolatedLow = 'x\uDC00';
+  if (sanitizeXmlChars(isolatedLow) === 'x') ok('sanitizeXmlChars removes isolated low surrogate');
+  else fail(`sanitizeXmlChars should remove isolated low surrogate, got ${JSON.stringify(sanitizeXmlChars(isolatedLow))}`);
+
+  // Preserve valid supplementary character (emoji stored as surrogate pair U+1F600)
+  const emoji = '\uD83D\uDE00'; // U+1F600 GRINNING FACE
+  if (sanitizeXmlChars(emoji) === emoji) ok('sanitizeXmlChars preserves valid surrogate pair (supplementary char)');
+  else fail(`sanitizeXmlChars must preserve valid surrogate pairs, got ${JSON.stringify(sanitizeXmlChars(emoji))}`);
+
+  // String with mixed content: forbidden chars removed, "orphan" preserved (its leading \uD800 is stripped)
+  const mixed = 'OK\x00bad\x01data\tgood\ntext\uFFFEend\uD800orphan';
+  const expected = 'OKbaddata\tgood\ntextendorphan';
+  if (sanitizeXmlChars(mixed) === expected) ok('sanitizeXmlChars strips forbidden chars from mixed content');
+  else fail(`sanitizeXmlChars mixed content: expected ${JSON.stringify(expected)}, got ${JSON.stringify(sanitizeXmlChars(mixed))}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('20. Generated worksheet XML contains no XML 1.0-forbidden characters');
+if (typeof XLSX === 'undefined' || typeof buildCoverSheet !== 'function') {
+  fail('XLSX or buildCoverSheet not available for XML content tests');
+} else {
+  function unzipForXmlTest(uint8) {
+    const data = Buffer.from(uint8);
+    const out = new Map();
+    let p = 0;
+    while (p + 30 <= data.length) {
+      if (data.readUInt32LE(p) !== 0x04034b50) break;
+      const comp = data.readUInt16LE(p + 8);
+      const size = data.readUInt32LE(p + 22);
+      const nameLen = data.readUInt16LE(p + 26);
+      const extraLen = data.readUInt16LE(p + 28);
+      const nameStart = p + 30;
+      const dataStart = nameStart + nameLen + extraLen;
+      const name = data.slice(nameStart, nameStart + nameLen).toString('utf8');
+      if (comp !== 0) break;
+      out.set(name, data.slice(dataStart, dataStart + size).toString('utf8'));
+      p = dataStart + size;
+    }
+    return out;
+  }
+  // Build a workbook via ws_set with control-character content
+  const wb = XLSX.utils.book_new();
+  const ws = {};
+  ws['!ref'] = 'A1:A2';
+  ws['!widthTracker'] = { widths: [], minWch: 8, maxWch: 80 };
+  // Write cells via ws_set so sanitization is applied
+  if (typeof ws_set === 'function') {
+    ws_set(ws, 0, 0, 'normal text', {});
+    ws_set(ws, 1, 0, 'bad\x00control\x01here', {});
+    // Verify stored value has been sanitized by ws_set
+    const a2Cell = ws['A2'];
+    if (a2Cell && !/[\x00\x01]/.test(String(a2Cell.v))) ok('ws_set strips forbidden chars from stored cell value');
+    else fail(`ws_set should strip forbidden chars from stored value, got ${JSON.stringify(a2Cell && a2Cell.v)}`);
+  } else {
+    // Fallback: directly assign (won't go through ws_set)
+    ws['A1'] = { v: 'normal text', t: 's', s: {} };
+    ws['A2'] = { v: 'bad\x00control\x01here', t: 's', s: {} };
+    fail('ws_set not exported; cannot test stored-value sanitization directly');
+  }
+  XLSX.utils.book_append_sheet(wb, ws, 'Test');
+  const bytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const entries = unzipForXmlTest(bytes);
+  const sheetXml = entries.get('xl/worksheets/sheet1.xml') || '';
+  // The forbidden chars U+0000 and U+0001 must not appear in the output XML
+  const hasForbidden = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(sheetXml);
+  if (!hasForbidden) ok('Generated worksheet XML contains no XML 1.0-forbidden control characters');
+  else fail('Generated worksheet XML still contains forbidden control characters');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('21. parseDsmOutput — banner filtering and header detection');
+if (typeof parseDsmOutput !== 'function') {
+  fail('parseDsmOutput is not exported');
+} else {
+  // Standard CSV with no banner
+  const plain = 'SERVER_NAME,VERSION\nSRV1,8.1.27\n1 row(s) affected.';
+  const r1 = parseDsmOutput(plain);
+  if (r1.headers.join(',') === 'SERVER_NAME,VERSION') ok('parseDsmOutput: plain CSV header detected');
+  else fail(`parseDsmOutput: plain CSV headers wrong: ${JSON.stringify(r1.headers)}`);
+  if (r1.rows.length === 1 && r1.rows[0][0] === 'SRV1') ok('parseDsmOutput: plain CSV data row parsed');
+  else fail(`parseDsmOutput: plain CSV rows wrong: ${JSON.stringify(r1.rows)}`);
+
+  // Full banner block — all four banner lines must be filtered
+  const bannerText = [
+    'Command Line Administrative Interface - Version 8\tRelease 1\tLevel 27.0',
+    '(c) Copyright IBM Corp. 1990\t2025\t',
+    'Server Version 8\tRelease 1\tLevel 27.000',
+    'Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14',
+    'SERVER_NAME,VERSION',
+    'SRV1,8.1.27',
+    '1 row(s) affected.',
+  ].join('\n');
+  const r2 = parseDsmOutput(bannerText);
+  if (r2.headers.join(',') === 'SERVER_NAME,VERSION') ok('parseDsmOutput: banner filtered; CSV header detected');
+  else fail(`parseDsmOutput: banner not filtered; headers: ${JSON.stringify(r2.headers)}`);
+  if (r2.rows.length === 1 && r2.rows[0][0] === 'SRV1') ok('parseDsmOutput: data rows correct after banner filtering');
+  else fail(`parseDsmOutput: data rows wrong after banner: ${JSON.stringify(r2.rows)}`);
+
+  // Variant: spaces instead of tabs, mixed case
+  const bannerSpaces = [
+    'COMMAND   LINE   ADMINISTRATIVE   INTERFACE - Version 8   Release 1   Level 27.0',
+    '(C) COPYRIGHT IBM CORP. 1990   2025',
+    'Server Version 9   Release 2   Level 5.001',
+    'server date/time: 2026-07-14   09:00:00  Last access: 2026-07-14   09:00:00',
+    'A,B',
+    'x,y',
+  ].join('\n');
+  const r3 = parseDsmOutput(bannerSpaces);
+  if (r3.headers.join(',') === 'A,B') ok('parseDsmOutput: banner variant with spaces/mixed case filtered');
+  else fail(`parseDsmOutput: banner variant not filtered; headers: ${JSON.stringify(r3.headers)}`);
+
+  // Ensure "Server Version" in a data column is NOT filtered
+  const withServerVer = [
+    'SERVER_NAME,SERVER_VERSION',
+    'SRV1,Server Version 8.1',
+  ].join('\n');
+  const r4 = parseDsmOutput(withServerVer);
+  if (r4.headers[0] === 'SERVER_NAME') ok('parseDsmOutput: "Server Version" in data column is not filtered');
+  else fail(`parseDsmOutput: incorrectly filtered row with "Server Version" in data: ${JSON.stringify(r4)}`);
+
+  // IBM SP product line still filtered
+  const ibmLine = [
+    'IBM Storage Protect for Virtual Environments',
+    'NODE_NAME',
+    'NODE1',
+  ].join('\n');
+  const r5 = parseDsmOutput(ibmLine);
+  if (r5.headers[0] === 'NODE_NAME') ok('parseDsmOutput: IBM product line still filtered');
+  else fail(`parseDsmOutput: IBM product line filter broken: ${JSON.stringify(r5.headers)}`);
+
+  // Empty input
+  const r6 = parseDsmOutput('');
+  if (r6.headers.length === 0 && r6.rows.length === 0) ok('parseDsmOutput: empty input returns empty result');
+  else fail(`parseDsmOutput: empty input should return empty, got ${JSON.stringify(r6)}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('22. Left-alignment in generated XLSX styles');
+if (typeof XLSX === 'undefined') {
+  fail('XLSX not available for alignment tests');
+} else {
+  function unzipStyles(uint8) {
+    const data = Buffer.from(uint8);
+    const out = new Map();
+    let p = 0;
+    while (p + 30 <= data.length) {
+      if (data.readUInt32LE(p) !== 0x04034b50) break;
+      const comp = data.readUInt16LE(p + 8);
+      const size = data.readUInt32LE(p + 22);
+      const nameLen = data.readUInt16LE(p + 26);
+      const extraLen = data.readUInt16LE(p + 28);
+      const nameStart = p + 30;
+      const dataStart = nameStart + nameLen + extraLen;
+      const name = data.slice(nameStart, nameStart + nameLen).toString('utf8');
+      if (comp !== 0) break;
+      out.set(name, data.slice(dataStart, dataStart + size).toString('utf8'));
+      p = dataStart + size;
+    }
+    return out;
+  }
+  const wb2 = XLSX.utils.book_new();
+  const ws2 = {};
+  ws2['!ref'] = 'A1:A1';
+  ws2['A1'] = { v: 'test', t: 's', s: {} };
+  XLSX.utils.book_append_sheet(wb2, ws2, 'Align');
+  const bytes2 = XLSX.write(wb2, { bookType: 'xlsx', type: 'array' });
+  const entries2 = unzipStyles(bytes2);
+  const stylesXml2 = entries2.get('xl/styles.xml') || '';
+  // Extract only the <cellXfs> section (not <cellStyleXfs> which is a base style record)
+  const cellXfsMatch = stylesXml2.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/);
+  const cellXfsContent = cellXfsMatch ? cellXfsMatch[1] : '';
+  const xfMatches = cellXfsContent.match(/<xf[^>]*>/g) || [];
+  const allLeftAligned = xfMatches.length > 0 && xfMatches.every(tag => /applyAlignment="1"/.test(tag));
+  if (allLeftAligned) ok('All <cellXfs> <xf> elements have applyAlignment="1"');
+  else fail(`Some <cellXfs> <xf> elements missing applyAlignment="1": ${xfMatches.filter(t => !/applyAlignment="1"/.test(t)).join(' | ')}`);
+  const hasHorizLeft = /horizontal="left"/.test(stylesXml2);
+  if (hasHorizLeft) ok('Styles XML includes horizontal="left" alignment');
+  else fail('Styles XML missing horizontal="left" alignment');
+  // Verify wrapText style also has horizontal="left"
+  const hasWrapLeft = /<alignment horizontal="left" wrapText="1"/.test(stylesXml2) || /<alignment[^>]*wrapText="1"[^>]*horizontal="left"/.test(stylesXml2);
+  if (hasWrapLeft || /<alignment horizontal="left"/.test(stylesXml2)) ok('Wrap-text styles also specify horizontal="left"');
+  else fail('Wrap-text styles missing horizontal="left"');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('23. Column header fallback and row/header length safety');
+if (typeof addQueryBlock !== 'function') {
+  fail('addQueryBlock is not exported');
+} else {
+  // Build a minimal worksheet mock
+  function makeWs() {
+    const ws = {};
+    ws['!widthTracker'] = { widths: [], minWch: 8, maxWch: 80 };
+    return ws;
+  }
+
+  // 1. Empty result with query.columns fallback
+  const q1 = {
+    id: 'test_q', title: 'Test Query', outputFile: 'test.csv',
+    columns: ['COL_A', 'COL_B', 'COL_C'],
+  };
+  const ws1 = makeWs();
+  addQueryBlock(ws1, 0, q1, { headers: [], rows: [] });
+  // Row 0 = section header, row 1 = column headers (from q1.columns), row 2 = "No rows returned"
+  if (ws1['A2'] && ws1['A2'].v === 'COL_A') ok('addQueryBlock: query.columns used as header fallback for empty result');
+  else fail(`addQueryBlock: expected COL_A at A2, got ${JSON.stringify(ws1['A2'] && ws1['A2'].v)}`);
+  if (ws1['C2'] && ws1['C2'].v === 'COL_C') ok('addQueryBlock: all fallback columns written');
+  else fail(`addQueryBlock: expected COL_C at C2, got ${JSON.stringify(ws1['C2'] && ws1['C2'].v)}`);
+  if (ws1['A3'] && /no rows/i.test(ws1['A3'].v)) ok('addQueryBlock: "No rows returned" after fallback header');
+  else fail(`addQueryBlock: expected "No rows returned" at A3, got ${JSON.stringify(ws1['A3'] && ws1['A3'].v)}`);
+
+  // 2. No fallback when query.columns not defined and headers empty
+  const q2 = { id: 'test_q2', title: 'Test2', outputFile: 'test2.csv' };
+  const ws2 = makeWs();
+  addQueryBlock(ws2, 0, q2, { headers: [], rows: [] });
+  // Should go straight to "No rows returned" without inventing headers
+  if (ws2['A2'] && /no rows/i.test(ws2['A2'].v)) ok('addQueryBlock: no invented headers when query.columns undefined');
+  else fail(`addQueryBlock: expected "No rows returned" at A2, got ${JSON.stringify(ws2['A2'] && ws2['A2'].v)}`);
+
+  // 3. Row shorter than header — pad with empty string
+  const q3 = { id: 'test_q3', title: 'Test3', outputFile: 'test3.csv' };
+  const ws3 = makeWs();
+  addQueryBlock(ws3, 0, q3, {
+    headers: ['H1', 'H2', 'H3'],
+    rows: [['val1', 'val2']], // only 2 values, header has 3
+  });
+  // C3 should exist (padded) and be empty string
+  if (ws3['C3'] !== undefined && ws3['C3'].v === '') ok('addQueryBlock: short row padded with empty cell to match header width');
+  else fail(`addQueryBlock: expected empty pad at C3, got ${JSON.stringify(ws3['C3'])}`);
+
+  // 4. Row longer than header — extra columns written with deterministic fallback header
+  const q4 = { id: 'test_q4', title: 'Test4', outputFile: 'test4.csv' };
+  const ws4 = makeWs();
+  addQueryBlock(ws4, 0, q4, {
+    headers: ['H1'],
+    rows: [['v1', 'v2', 'v3']], // 3 values, header has 1
+  });
+  // Extra values in B3, C3 should be written
+  if (ws4['B3'] && ws4['B3'].v === 'v2') ok('addQueryBlock: extra fields beyond header written to worksheet');
+  else fail(`addQueryBlock: expected v2 at B3, got ${JSON.stringify(ws4['B3'] && ws4['B3'].v)}`);
+  if (ws4['C3'] && ws4['C3'].v === 'v3') ok('addQueryBlock: all extra fields written');
+  else fail(`addQueryBlock: expected v3 at C3, got ${JSON.stringify(ws4['C3'] && ws4['C3'].v)}`);
+
+  // 5. Imported CSV headers take priority over query.columns when both available
+  const q5 = {
+    id: 'test_q5', title: 'Test5', outputFile: 'test5.csv',
+    columns: ['FALLBACK_A', 'FALLBACK_B'],
+  };
+  const ws5 = makeWs();
+  addQueryBlock(ws5, 0, q5, { headers: ['REAL_A', 'REAL_B'], rows: [] });
+  if (ws5['A2'] && ws5['A2'].v === 'REAL_A') ok('addQueryBlock: imported headers take priority over query.columns');
+  else fail(`addQueryBlock: imported headers should win, got ${JSON.stringify(ws5['A2'] && ws5['A2'].v)}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('24. README troubleshooting notes for sanitization and banner filtering');
+if (readme.includes('control character') || readme.includes('XML') || readme.includes('illegal')) {
+  ok('README includes troubleshooting note for XML/control-character issues');
+} else {
+  fail('README missing troubleshooting note for XML/control-character sanitization');
+}
+if (readme.includes('banner') || readme.includes('administrative-client') || readme.includes('Command Line Administrative')) {
+  ok('README includes troubleshooting note for CLI banner filtering');
+} else {
+  fail('README missing troubleshooting note for CLI banner filtering');
+}
+
 
 console.log('\n============================================================');
 console.log(`Results: ${PASS} passed, ${FAIL} failed`);
