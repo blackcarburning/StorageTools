@@ -1611,7 +1611,7 @@ function isNoMatchRecord(fields) {
   const fragments = normalizedNoiseFragments(fields);
   if (fragments.length === 0) return false;
   const text = fragments.join(' ').replace(/\s+/g, ' ').trim();
-  return /^ANR2034E\b\s*SELECT\b\s*[:\-]?\s*NO\s+MATCH\s+FOUND\s+USING\s+THIS\s+CRITERIA\b\s*[.!]*$/i.test(text);
+  return /^ANR2034E\b.*\bSELECT\b\s*[:\-]?\s*NO\s+MATCH\s+FOUND(?:\s+USING\s+THIS\s+CRITERI(?:A|ON))?\b.*$/i.test(text);
 }
 
 /**

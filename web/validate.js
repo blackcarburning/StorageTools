@@ -1007,7 +1007,7 @@ if (typeof parseDsmOutput !== 'function') {
   const sharedFixtureCrlf = sharedFixtureLf.replace(/\n/g, '\r\n');
   const parsedLf = parseDsmOutput(sharedFixtureLf, { columns: ['A', 'B'] });
   const parsedCrlf = parseDsmOutput(sharedFixtureCrlf, { columns: ['A', 'B'] });
-  if (JSON.stringify(parsedLf) === JSON.stringify(parsedCrlf)) ok('parseDsmOutput: SH/LF and CMD/CRLF fixtures parse identically');
+  if (JSON.stringify(parsedLf) === JSON.stringify(parsedCrlf)) ok('parseDsmOutput: LF and CRLF fixtures parse identically');
   else fail(`parseDsmOutput: LF/CRLF mismatch: ${JSON.stringify(parsedLf)} vs ${JSON.stringify(parsedCrlf)}`);
 }
 
@@ -1182,8 +1182,8 @@ if (typeof addQueryBlock !== 'function') {
   else fail('addQueryBlock: raw no-match message leaked into worksheet cells');
 
   if (typeof XLSX !== 'undefined') {
-    function unzipNoMatchXml(uint8) {
-      const data = Buffer.from(uint8);
+    function unzipNoMatchXml(zipBytes) {
+      const data = Buffer.from(zipBytes);
       const out = new Map();
       let p = 0;
       while (p + 30 <= data.length) {
