@@ -1595,7 +1595,7 @@ function isAdministrativeNoiseRecord(fields) {
     /^Protecting IBM\b/i.test(text) ||
     /^SP SERVER>/i.test(text) ||
     /^Command\s+Line\s+Administrative\s+Interface\s*-\s*Version\s+\S+\s+Release\s+\S+\s+Level\s+\S+$/i.test(text) ||
-    /^\(c\)\s*Copyright\s+IBM\s+Corp\.?\s+\d{4}(?:\s+\d{4})?$/i.test(text) ||
+    /^\(c\)\s*Copyright\s+IBM\s+Corp\.?\s+(?:199\d|20[0-2]\d|2030)(?:\s+(?:199\d|20[0-2]\d|2030))?$/i.test(text) ||
     /^Server\s+Version\s+\S+\s+Release\s+\S+\s+Level\s+\S+$/i.test(text) ||
     /^Server\s+date\/time:\s*\S.*(?:\s+Last\s+access:\s*\S.*)?$/i.test(text)
   );
