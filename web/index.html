@@ -769,6 +769,20 @@ function cmdSafeTitle(title) {
   return title.replace(/[\u2013\u2014]/g, ' - ');
 }
 
+/** Prepare dynamic text for safe storage in CMD SET "VAR=value" assignments.
+ *  - Newlines are flattened so one title cannot split multiple CMD lines.
+ *  - Double-quotes are normalized to apostrophes to keep SET "VAR=value" balanced.
+ *  - Carets and percent signs are doubled so CMD treats them as literal text. */
+function cmdSafeSetValue(value) {
+  // Null/undefined become empty strings; other non-strings are coerced.
+  const text = value == null ? '' : value;
+  return (typeof text === 'string' ? text : String(text))
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/"/g, "'")
+    .replace(/\^/g, '^^')
+    .replace(/%/g, '%%');
+}
+
 function buildCmdLine(cfg, query) {
   const sql      = escapeForCmd(query.sql);
   const outFile  = `%OUTDIR%\\${query.outputFile}`;
@@ -881,11 +895,14 @@ function generateCmdContent() {
     const num   = String(idx + 1).padStart(2, '0');
     const title = cmdSafeTitle(q.title);
     const v8note = q.v8only ? ' [v8 only - may warn/fail on older servers]' : '';
-    lines.push(`REM ── [${num}/${total}] ${title}${v8note} ──`);
+    const queryLabel = `[${num}/${total}] ${title}${v8note}`;
+    const cmdSafeQueryLabel = cmdSafeSetValue(queryLabel);
+    lines.push(`REM ── ${cmdSafeQueryLabel} ──`);
     if (q.warnIfMissing) {
       lines.push('REM Missing optional view is classified as WARN when rc=28 RC_NOTABLE.');
     }
-    lines.push(`echo [${num}/${total}] ${title}${v8note}...`);
+    lines.push(`SET "Q_LABEL=${cmdSafeQueryLabel}"`);
+    lines.push('echo "%Q_LABEL%"...');
     lines.push(buildCmdLine(cfg, q));
     lines.push('SET QRC=%ERRORLEVEL%');
     lines.push(`SET OPTIONAL_NOTABLE_WARN=${getOptionalWarnFlag(q)}`);
@@ -894,30 +911,16 @@ function generateCmdContent() {
     lines.push('IF NOT %QRC%==0 SET QSTATUS=[FAILED]');
     lines.push('IF NOT %QRC%==0 IF /I "%RC_SEV%"=="WARN" SET QSTATUS=[WARN]');
     lines.push('IF NOT %QRC%==0 IF /I "%RC_SYM%"=="RC_NOTABLE" IF "%OPTIONAL_NOTABLE_WARN%"=="1" SET QSTATUS=[WARN]');
-    lines.push('IF %QRC%==0 (');
-    lines.push('  FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO IF %%~zS GTR 0 SET QSTATUS=[WARN]');
-    lines.push(')');
-    lines.push(`echo   %QSTATUS% [${num}/${total}] ${title} (rc=%QRC% %RC_SYM% -- %RC_DESC%)`);
-    lines.push(`echo %DATE% %TIME% %QSTATUS% [${num}/${total}] ${title} rc=%QRC% %RC_SYM% -- %RC_DESC% >> "%OUTDIR%\\collection_log.txt"`);
+    lines.push('CALL :HandleQueryStderr');
+    lines.push('IF %QRC%==0 IF "%QERR_HAS_STDERR%"=="1" SET QSTATUS=[WARN]');
+    lines.push('echo   %QSTATUS% "%Q_LABEL%" (rc=%QRC% %RC_SYM% -- %RC_DESC%)');
+    lines.push('echo %DATE% %TIME% %QSTATUS% "%Q_LABEL%" rc=%QRC% %RC_SYM% -- %RC_DESC% >> "%OUTDIR%\\collection_log.txt"');
     lines.push('IF "%QSTATUS%"=="[FAILED]" SET /A FAIL_COUNT+=1');
     lines.push('IF "%QSTATUS%"=="[WARN]"   SET /A WARN_COUNT+=1');
     lines.push('IF "%QSTATUS%"=="[OK]"     SET /A PASS_COUNT+=1');
-    lines.push('FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO IF %%~zS GTR 0 (');
-    lines.push(`  echo --- Stderr for [${num}/${total}] ${title} ---`);
-    lines.push('  TYPE "%OUTDIR%\\qerr.tmp"');
-    lines.push('  echo --- End stderr ---');
-    lines.push(`  echo %DATE% %TIME% --- [${num}/${total}] ${title} --- >> "%OUTDIR%\\collection_errors.log"`);
-    lines.push('  TYPE "%OUTDIR%\\qerr.tmp" >> "%OUTDIR%\\collection_errors.log"');
-    lines.push('  echo. >> "%OUTDIR%\\collection_errors.log"');
-    lines.push(')');
-    lines.push('SET "ANS1051_FATAL=0"');
-    lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" FINDSTR /I "ANS1051I" "%OUTDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"');
-    lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" DEL "%OUTDIR%\\qerr.tmp"');
-    lines.push('IF %ANS1051_FATAL%==1 (');
-    lines.push('  echo [FATAL] ANS1051I authentication failure detected -- aborting collection 1>&2');
-    lines.push(`  echo %DATE% %TIME% [FATAL] ANS1051I in [${num}/${total}] ${title} -- collection aborted >> "%OUTDIR%\\collection_log.txt"`);
-    lines.push('  EXIT /B 1');
-    lines.push(')');
+    lines.push('IF %ANS1051_FATAL%==1 echo [FATAL] ANS1051I authentication failure detected -- aborting collection 1>&2');
+    lines.push('IF %ANS1051_FATAL%==1 echo %DATE% %TIME% [FATAL] ANS1051I in "%Q_LABEL%" -- collection aborted >> "%OUTDIR%\\collection_log.txt"');
+    lines.push('IF %ANS1051_FATAL%==1 EXIT /B 1');
     lines.push('');
   });
 
@@ -1027,6 +1030,25 @@ function generateCmdContent() {
   lines.push('IF "%~1"=="35"  (SET "RC_SYM=RC_CANCELED"        & SET "RC_DESC=command canceled"                                 & SET "RC_SEV=WARN" & GOTO :EOF)');
   lines.push('IF "%~1"=="36"  (SET "RC_SYM=RC_INVPOLICY"       & SET "RC_DESC=invalid policy-domain definition"                 & GOTO :EOF)');
   lines.push('IF "%~1"=="137" (SET "RC_SYM=DSM_RC_AUTH_FAILURE" & SET "RC_DESC=authentication failed"                           & GOTO :EOF)');
+  lines.push('GOTO :EOF');
+  lines.push('');
+  lines.push('REM ================================================================');
+  lines.push('REM :HandleQueryStderr  -  mirror stderr, flag WARN, detect auth failures');
+  lines.push('REM ================================================================');
+  lines.push(':HandleQueryStderr');
+  lines.push('SET "QERR_HAS_STDERR=0"');
+  lines.push('SET "QERR_BYTES=0"');
+  lines.push('SET "ANS1051_FATAL=0"');
+  lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO SET "QERR_BYTES=%%~zS"');
+  lines.push('IF %QERR_BYTES% GTR 0 SET "QERR_HAS_STDERR=1"');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" echo --- Stderr for "%Q_LABEL%" ---');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" TYPE "%OUTDIR%\\qerr.tmp"');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" echo --- End stderr ---');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" echo %DATE% %TIME% --- "%Q_LABEL%" --- >> "%OUTDIR%\\collection_errors.log"');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" TYPE "%OUTDIR%\\qerr.tmp" >> "%OUTDIR%\\collection_errors.log"');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" echo. >> "%OUTDIR%\\collection_errors.log"');
+  lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" FINDSTR /I "ANS1051I" "%OUTDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"');
+  lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" DEL "%OUTDIR%\\qerr.tmp"');
   lines.push('GOTO :EOF');
 
   return lines.join('\r\n');
