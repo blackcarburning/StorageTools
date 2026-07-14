@@ -163,7 +163,7 @@ Server Version 8    Release 1    Level 27.000
 Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14
 ```
 
-StorageTools automatically filters these banner lines before header detection and data parsing. Filtering is case-insensitive and tolerant of whitespace, quoting, BOM/control-character prefixes, and version-number changes. If the server emits a trustworthy header row, StorageTools keeps it. If the output contains only data rows, StorageTools falls back to deterministic column headers derived from the query `SELECT` list and schema metadata for `SELECT *` queries such as `DBSPACE`. Empty-result sheets still retain their expected column headings.
+StorageTools automatically filters these banner lines before header detection and data parsing. Filtering is case-insensitive and tolerant of whitespace, quoting, BOM/control-character prefixes, and version-number changes. If the server emits a trustworthy header row, StorageTools keeps it. If the output contains only data rows, StorageTools falls back to deterministic column headers derived from the query `SELECT` list and schema metadata for `SELECT *` queries such as `DBSPACE`. Empty-result sheets still retain their expected column headings. Known no-match responses such as `ANR2034E SELECT: No match found using this criteria.` are also normalized as empty results (without writing raw IBM error text into worksheet data cells).
 
 ---
 
