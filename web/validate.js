@@ -206,7 +206,7 @@ if (!/function generateShContent\(\)/.test(js)) fail('generateShContent still ta
 else ok('generateShContent uses a single unified path');
 if (!/StorageTools_Complete_\$\{server\}\.cmd/.test(js)) ok('CMD download filename is unified');
 else ok('CMD download filename is unified');
-if (cmd.includes('IBM Storage Protect — Complete Collection')) ok('CMD script is labeled as complete collection');
+if (cmd.includes('IBM Storage Protect - Complete Collection')) ok('CMD script is labeled as complete collection (ASCII dash)');
 else fail('CMD script missing complete collection label');
 if (sh.includes('IBM Storage Protect — Complete Collection')) ok('SH script is labeled as complete collection');
 else fail('SH script missing complete collection label');
@@ -1037,6 +1037,126 @@ if (readme.includes('banner') || readme.includes('administrative-client') || rea
   ok('README includes troubleshooting note for CLI banner filtering');
 } else {
   fail('README missing troubleshooting note for CLI banner filtering');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('25. Windows CMD path correctness (backslash escaping)');
+{
+  // All four critical Windows paths must be present with correct separator
+  const goodPaths = [
+    '%OUTDIR%\\qerr.tmp',
+    '%OUTDIR%\\preflight.tmp',
+    '%OUTDIR%\\collection_log.txt',
+    '%OUTDIR%\\collection_errors.log',
+  ];
+  for (const p of goodPaths) {
+    if (cmd.includes(p)) ok(`CMD contains correct path: ${p}`);
+    else fail(`CMD missing correct path: ${p}`);
+  }
+
+  // None of the malformed (backslash-dropped) forms must appear
+  const badPaths = [
+    '%OUTDIR%qerr.tmp',
+    '%OUTDIR%preflight.tmp',
+    '%OUTDIR%collection_log.txt',
+    '%OUTDIR%collection_errors.log',
+  ];
+  for (const p of badPaths) {
+    if (!cmd.includes(p)) ok(`CMD has no malformed path: ${p}`);
+    else fail(`CMD contains malformed path: ${p}`);
+  }
+}
+
+section('26. Windows CMD ANS1051 authentication detection (no stale ERRORLEVEL)');
+{
+  // Must NOT use stale ERRORLEVEL pattern
+  if (!cmd.includes('IF %ERRORLEVEL%==0 SET ANS1051_FATAL=1')) {
+    ok('CMD does not use stale ERRORLEVEL for ANS1051_FATAL');
+  } else {
+    fail('CMD still uses stale ERRORLEVEL pattern for ANS1051_FATAL');
+  }
+
+  // Must use && pattern so SET only runs when FINDSTR succeeds
+  if (cmd.includes('FINDSTR /I "ANS1051I" "%OUTDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"')) {
+    ok('CMD uses FINDSTR && SET pattern for ANS1051_FATAL');
+  } else {
+    fail('CMD missing FINDSTR && SET pattern for ANS1051_FATAL');
+  }
+
+  // ANS1051_FATAL must be initialized to 0
+  if (cmd.includes('SET "ANS1051_FATAL=0"')) {
+    ok('CMD initializes ANS1051_FATAL=0');
+  } else {
+    fail('CMD does not initialize ANS1051_FATAL=0');
+  }
+
+  // Preflight must also use && pattern
+  if (cmd.includes('FINDSTR /I "ANS1051I" "%OUTDIR%\\preflight.tmp" > NUL 2>&1 && SET PREFLIGHT_AUTH=0')) {
+    ok('CMD uses FINDSTR && SET pattern for PREFLIGHT_AUTH');
+  } else {
+    fail('CMD missing FINDSTR && SET pattern for PREFLIGHT_AUTH');
+  }
+}
+
+section('27. Windows CMD dsmadmc invocation (credentials and optfile)');
+{
+  // Credentials must be quoted in every invocation
+  if (cmd.includes('-id="%ADMID%"') && cmd.includes('-pa="%ADMPA%"')) {
+    ok('CMD quotes admin ID and password in dsmadmc invocations');
+  } else {
+    fail('CMD missing quoted admin credentials in dsmadmc invocations');
+  }
+
+  // OPTARG must be present (covers optfile)
+  if (cmd.includes('%OPTARG%')) {
+    ok('CMD includes %OPTARG% for optfile handling');
+  } else {
+    fail('CMD missing %OPTARG% for optfile handling');
+  }
+
+  // Preflight must use quoted credentials too
+  const preflightLine = cmd.split(/\r?\n/).find(l => l.includes('QUERY SESSION'));
+  if (preflightLine && preflightLine.includes('-id="%ADMID%"') && preflightLine.includes('-pa="%ADMPA%"')) {
+    ok('CMD preflight dsmadmc uses quoted credentials');
+  } else {
+    fail('CMD preflight dsmadmc missing quoted credentials');
+  }
+}
+
+section('28. Windows CMD: no non-ASCII dash punctuation in generated text');
+{
+  const emDash = '\u2014';
+  const enDash = '\u2013';
+  if (!cmd.includes(emDash) && !cmd.includes(enDash)) {
+    ok('CMD contains no em/en dash characters (no mojibake risk)');
+  } else {
+    // Report the offending lines
+    const lines = cmd.split('\r\n');
+    lines.forEach((line, i) => {
+      if (line.includes(emDash) || line.includes(enDash)) {
+        fail(`CMD line ${i + 1} contains non-ASCII dash: ${line.slice(0, 80)}`);
+      }
+    });
+  }
+
+  // SH script must still have em dashes (unchanged)
+  if (sh.includes(emDash)) {
+    ok('SH script retains em dash (SH output unchanged)');
+  } else {
+    fail('SH script lost em dash - SH generation should not change');
+  }
+}
+
+section('29. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FINDSTR/DEL');
+{
+  const qerrPath = '"%OUTDIR%\\qerr.tmp"';
+  const count = cmd.split(qerrPath).length - 1;
+  // Expect at least 6 uses: redirection (in buildCmdLine), size-check×2, TYPE×2, FINDSTR, DEL
+  if (count >= 6) {
+    ok(`CMD uses consistent qerr.tmp path (${count} times)`);
+  } else {
+    fail(`CMD uses qerr.tmp path fewer times than expected (${count}); may be inconsistent`);
+  }
 }
 
 
