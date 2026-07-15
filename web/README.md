@@ -83,12 +83,18 @@ The healthcheck engine:
 - atomically replaces prior healthcheck results when you import a new archive or rerun the analysis
 
 The completed report opens in a **separate browser tab/window** and includes:
+- a dedicated **AI-assisted healthcheck evaluation** section near the beginning of the report
 - executive summary and overall traffic light
 - Red / Amber / Green / Informational / Not Tested counters
 - detailed findings by section
 - missing-data / insufficient-data items
 - collection metadata from the imported archive
-- optional AI-assisted narrative analysis appended after the deterministic traffic-light report
+
+The AI section always shows one of these states:
+- **Not included** — deterministic report only; no OpenAI request was made
+- **Generating** — includes the selected model ID and a visible waiting message
+- **Included** — includes the model ID, generation timestamp, narrative output, and review disclaimer
+- **Failed** — includes the model ID (if known), attempt timestamp, sanitized error, and a note that the deterministic report remains complete
 
 You can also download the same report as a `.docx` file from the Healthcheck tab or from the opened report tab.
 
@@ -167,7 +173,7 @@ The Healthcheck tab contains a collapsible **AI analysis** area with:
 
 If AI analysis is enabled, StorageTools first builds the complete deterministic report locally, then sends a **structured summary of the report findings** to the OpenAI Responses API to request a narrative analysis. The app does **not** upload the `.tar` archive itself, your IBM credentials, or unrelated collection files.
 
-The AI section is appended after the traffic-light report and is clearly labelled with the model ID and generation timestamp. Treat the AI narrative as advisory output that should be reviewed by a qualified IBM Storage Protect administrator.
+The separate-tab HTML report and exported DOCX both place the **AI-assisted healthcheck evaluation** section immediately after the cover metadata and before the detailed deterministic findings. The section explicitly shows whether AI evaluation is **Not included**, **Generating**, **Included**, or **Failed**, along with the selected model ID and the relevant timestamp when available. Treat the AI narrative as advisory output that should be reviewed by a qualified IBM Storage Protect administrator.
 
 ### Strong API-key warning
 
@@ -193,17 +199,20 @@ Enabling AI analysis may send report content to OpenAI and may incur API charges
 ### Separate-tab report and DOCX export
 
 - The report window is opened synchronously from the Run button to avoid popup blockers where possible.
+- The report first renders a safe standalone shell, then fills in the deterministic findings, and finally replaces the AI section with the Included/Failed result when the OpenAI request finishes.
 - The HTML report uses escaped text and embedded styling only; no external resources are loaded.
-- The DOCX export contains the same deterministic traffic-light content, with optional AI analysis appended afterward when enabled.
+- The Healthcheck tab and report window clearly mark DOCX export as unavailable while AI generation is pending so you do not export an ambiguous intermediate document.
+- The DOCX export contains the same final AI state shown in the HTML report, including model ID, timestamp, Included/Not included/Generating/Failed status, and any sanitized failure message.
 
 ### Manual verification notes
 
 For manual browser testing:
 1. Import a real unified `.tar` archive.
 2. Run the Healthcheck report once with AI disabled and confirm no network call is made.
-3. Confirm the report opens in a new tab/window and that **Print / Save as PDF** works from that tab.
-4. Download the `.docx` report and open it in Word or LibreOffice.
-5. If desired, enter a real OpenAI API key on a trusted machine, refresh models, enable AI analysis, and confirm the AI section is appended after the deterministic findings.
+3. Confirm the report opens in a new tab/window, immediately shows a generating shell, and that **Print / Save as PDF** works from that tab.
+4. While AI is generating, confirm the report shows **AI-assisted evaluation: Generating** and DOCX export is marked as unavailable.
+5. Download the `.docx` report after completion/failure and open it in Word or LibreOffice.
+6. If desired, enter a real OpenAI API key on a trusted machine, refresh models, enable AI analysis, and confirm the AI section appears near the beginning with the final Included/Failed state, model ID, and timestamp.
 
 ---
 
@@ -288,7 +297,7 @@ StorageTools automatically filters these banner lines before header detection an
 | `StorageTools_Complete_<SERVER>.sh` | Unix/Linux complete collection script (78 queries) |
 | `StorageTools_Complete_<SERVER>_<TIMESTAMP>.tar` | Single portable archive: all CSV results + `collection_log.txt` + `collection_errors.log` + `manifest.txt` |
 | `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Unified workbook including Collection_Log and Collection_Errors sheets |
-| `StorageTools_Healthcheck_Report_<CUSTOMER>_<SERVER>_<DATE>.docx` | Traffic-light healthcheck report exported from the imported archive, with optional AI-assisted analysis appended |
+| `StorageTools_Healthcheck_Report_<CUSTOMER>_<SERVER>_<DATE>.docx` | Traffic-light healthcheck report exported from the imported archive, including the dedicated AI-assisted evaluation section and its final state metadata |
 
 Individual CSV files and logs are packaged into the `.tar` archive and removed on success. The `.tar` archive is the only collection artifact that should remain after a successful run.
 
