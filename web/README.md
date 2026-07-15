@@ -37,7 +37,7 @@ Download exactly one of the unified script types:
 - **Download Complete CMD**
 - **Download Complete SH**
 
-Both formats run the same canonical collection of **76 queries**, package all results into one `.tar` archive, and leave only that archive file on disk.
+Both formats run the same canonical collection of **78 queries**, package all results into one `.tar` archive, and leave only that archive file on disk.
 
 Generated filenames:
 - `StorageTools_Complete_<SERVER>.cmd`
@@ -134,6 +134,20 @@ Optional feature views can still warn on older or differently licensed servers. 
 `HELIX_TRAFFIC_LIGHT_compiled_v14.pl` in the repository root is the authoritative rule source. The web helper ports the rule ordering, thresholds, status wording, and recommendations into browser-side JavaScript so the analysis can run against the imported archive contents.
 
 Some Perl checks depend on source fields or time windows that are **not** present in the current archive format. Those checks are intentionally reported as **Not Tested / Insufficient Data** with the missing source identified, rather than being approximated. This is expected behavior and is preferable to a false Green result.
+
+### New collection fields (archive format v1+)
+
+The following fields and aggregate queries were added to enable previously Not Tested HELIX rules:
+
+| Source file | New field / query | Enables rule |
+|---|---|---|
+| `doc_01_status.csv` | `SCHEDMODE`, `SUMMARYRETENTION`, `EVENTRETENTION` | Schedule Mode, Summary Log Retention, Event Log Retention |
+| `doc_34_drm_status.csv` | `FILEPROCESS` | Process File DB Backups? |
+| `doc_07_nodes.csv` | `TCP_ADDRESS` | Nodes Defined / Unique |
+| `hc_35_scratch_warnings.csv` | Full-retention ACTLOG aggregate (9 MSGNOs) | Scratch Tape Warnings |
+| `hc_36_tape_mounts.csv` | 168-hour TAPE MOUNT summary + drive count | Tape Mount Utilisation |
+
+Archives generated before these fields were added will show the affected checks as **Not Tested / Insufficient Data** rather than producing false results. Backward compatibility is fully preserved.
 
 ### Deterministic local analysis
 
@@ -270,8 +284,8 @@ StorageTools automatically filters these banner lines before header detection an
 
 | File | Description |
 |------|-------------|
-| `StorageTools_Complete_<SERVER>.cmd` | Windows complete collection script (76 queries) |
-| `StorageTools_Complete_<SERVER>.sh` | Unix/Linux complete collection script (76 queries) |
+| `StorageTools_Complete_<SERVER>.cmd` | Windows complete collection script (78 queries) |
+| `StorageTools_Complete_<SERVER>.sh` | Unix/Linux complete collection script (78 queries) |
 | `StorageTools_Complete_<SERVER>_<TIMESTAMP>.tar` | Single portable archive: all CSV results + `collection_log.txt` + `collection_errors.log` + `manifest.txt` |
 | `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Unified workbook including Collection_Log and Collection_Errors sheets |
 | `StorageTools_Healthcheck_Report_<CUSTOMER>_<SERVER>_<DATE>.docx` | Traffic-light healthcheck report exported from the imported archive, with optional AI-assisted analysis appended |

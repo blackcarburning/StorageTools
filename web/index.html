@@ -487,7 +487,7 @@ const ALL_QUERIES = [
 
   // ── Server ──────────────────────────────────────────────────────────────
   { id:'doc_01_status', title:'Server Status', section:'Server',
-    sql:"SELECT SERVER_NAME,SERVER_HLA,SERVER_LLA,PLATFORM,VERSION,RELEASE,LEVEL,SUBLEVEL,INSTALL_DATE,PASSEXP,MINPWLENGTH,ACTLOGRETENTION,LICENSECOMPLIANCE,MAXSESSIONS,MAXSCHEDSESSIONS,AVAILABILITY,ACCOUNTING,SCHEDULER,RANDOMIZE,QUERYSCHEDPERIOD FROM STATUS",
+    sql:"SELECT SERVER_NAME,SERVER_HLA,SERVER_LLA,PLATFORM,VERSION,RELEASE,LEVEL,SUBLEVEL,INSTALL_DATE,PASSEXP,MINPWLENGTH,ACTLOGRETENTION,LICENSECOMPLIANCE,MAXSESSIONS,MAXSCHEDSESSIONS,AVAILABILITY,ACCOUNTING,SCHEDULER,RANDOMIZE,QUERYSCHEDPERIOD,SCHEDMODE,SUMMARYRETENTION,EVENTRETENTION FROM STATUS",
     outputFile:'doc_01_status.csv' },
 
   { id:'doc_02_db', title:'Database Information', section:'Server',
@@ -529,7 +529,7 @@ const ALL_QUERIES = [
 
   // ── Nodes ────────────────────────────────────────────────────────────────
   { id:'doc_07_nodes', title:'Nodes — Full Detail', section:'Nodes',
-    sql:"SELECT NODE_NAME,PLATFORM_NAME,CLIENT_OS_LEVEL,DOMAIN_NAME,ARCHDELETE,BACKDELETE,CLIENT_VERSION,CLIENT_RELEASE,CLIENT_LEVEL,CLIENT_SUBLEVEL,OPTION_SET,CLIENT_HLA,DEDUPLICATION FROM NODES ORDER BY NODE_NAME",
+    sql:"SELECT NODE_NAME,PLATFORM_NAME,CLIENT_OS_LEVEL,DOMAIN_NAME,ARCHDELETE,BACKDELETE,CLIENT_VERSION,CLIENT_RELEASE,CLIENT_LEVEL,CLIENT_SUBLEVEL,OPTION_SET,CLIENT_HLA,DEDUPLICATION,TCP_ADDRESS FROM NODES ORDER BY NODE_NAME",
     outputFile:'doc_07_nodes.csv' },
 
   { id:'doc_08_nodes_platform', title:'Nodes — by Platform', section:'Nodes',
@@ -726,8 +726,8 @@ const ALL_QUERIES = [
 
   // ── DR ───────────────────────────────────────────────────────────────────
   { id:'doc_34_drm_status', title:'DRM Status', section:'DR',
-    sql:"SELECT PLANPREFIX,INSTRPREFIX,NONMOUNTNAME,COURIERNAME,VAULTNAME,DBBEXPIREDAYS,CHECKLABEL FROM DRMSTATUS",
-    columns:['PLANPREFIX','INSTRPREFIX','NONMOUNTNAME','COURIERNAME','VAULTNAME','DBBEXPIREDAYS','CHECKLABEL'],
+    sql:"SELECT PLANPREFIX,INSTRPREFIX,NONMOUNTNAME,COURIERNAME,VAULTNAME,DBBEXPIREDAYS,CHECKLABEL,FILEPROCESS FROM DRMSTATUS",
+    columns:['PLANPREFIX','INSTRPREFIX','NONMOUNTNAME','COURIERNAME','VAULTNAME','DBBEXPIREDAYS','CHECKLABEL','FILEPROCESS'],
     outputFile:'doc_34_drm_status.csv' },
 
   { id:'doc_35_drm_media', title:'DRM Media', section:'DR',
@@ -809,6 +809,16 @@ const ALL_QUERIES = [
   { id:'hc_31_active_sessions', title:'Active Client Sessions (Snapshot)', section:'Activity_Health',
     sql:"SELECT SESSION_ID,CLIENT_NAME,SESSION_TYPE,STATE,WAIT_SECONDS,CAST(BYTES_SENT/1024/1024 AS DECIMAL(12,2)) AS MB_SENT,CAST(BYTES_RECEIVED/1024/1024 AS DECIMAL(12,2)) AS MB_RECEIVED,SUBSTR(CHAR(START_TIME),1,19) AS START_TIME FROM SESSIONS WHERE UPPER(SESSION_TYPE)='NODE' ORDER BY SESSION_ID",
     outputFile:'hc_31_active_sessions.csv' },
+
+  { id:'hc_35_scratch_warnings', title:'Scratch Tape Warning Messages (full actlog retention)', section:'Activity_Health',
+    sql:"SELECT MSGNO,COUNT(*) AS WARNING_COUNT FROM ACTLOG WHERE MSGNO IN (692,1403,1404,1405,1407,3516,4583,6984,8945) GROUP BY MSGNO ORDER BY MSGNO",
+    columns:['MSGNO','WARNING_COUNT'],
+    outputFile:'hc_35_scratch_warnings.csv' },
+
+  { id:'hc_36_tape_mounts', title:'Tape Mount Utilisation (168 hrs)', section:'Activity_Health',
+    sql:"SELECT (SELECT COUNT(*) FROM DRIVES) AS DRIVE_COUNT,COALESCE(SUM((END_TIME-START_TIME) MINUTES),0) AS TOTAL_MOUNT_MINUTES,168 AS WINDOW_HOURS FROM SUMMARY WHERE ACTIVITY='TAPE MOUNT' AND START_TIME>CURRENT_TIMESTAMP-168 HOURS",
+    columns:['DRIVE_COUNT','TOTAL_MOUNT_MINUTES','WINDOW_HOURS'],
+    outputFile:'hc_36_tape_mounts.csv' },
 
   // ── Scripts ───────────────────────────────────────────────────────────────
   { id:'doc_39_scripts', title:'Server Scripts', section:'Scripts',
@@ -3646,9 +3656,48 @@ const HEALTHCHECK_RULES = [
     }
   },
   {
-    id:'fileprocess', title:'Process File DB Backups?', section:'DR & Database Backups', perlRef:'HELIX get_the_variables lines 1135-1178', parityNote:'Perl depends on DRMSTATUS.FILEPROCESS, DB.FULL_DEV_CLASS, and FILE DB backup history.', sources:['doc_02_db.csv', 'doc_34_drm_status.csv', 'hc_02_db_backups.csv'], threshold:'FILEPROCESS off with FILE usage/backups = failed', rationale:'The current unified archive does not collect DRMSTATUS.FILEPROCESS, so this Perl rule is reported as insufficient data instead of approximated.',
+    id:'fileprocess', title:'Process File DB Backups?', section:'DR & Database Backups', perlRef:'HELIX get_the_variables lines 1135-1178', parityNote:'Perl evaluates DRMSTATUS.FILEPROCESS against DB.FULL_DEV_CLASS type and FILE DB backup history from VOLHISTORY.', sources:['doc_02_db.csv', 'doc_34_drm_status.csv', 'hc_02_db_backups.csv'], threshold:'FILEPROCESS No with FILE-class default or FILE DB backups present = failed; Yes = OK', rationale:'Uses DRMSTATUS.FILEPROCESS (now collected), DB.FULL_DEV_CLASS name as proxy for devtype, and VOLHISTORY .DBV volume names from the imported database backup history.',
     evaluate(ctx, rule) {
-      return notTestedResult(rule, ['doc_34_drm_status.csv'], 'The current archive does not include DRMSTATUS.FILEPROCESS, which the Perl rule requires for exact parity.');
+      const missing = requireDatasets(ctx, rule, ['doc_34_drm_status.csv', 'doc_02_db.csv']);
+      if (missing) return notTestedResult(rule, missing);
+      const drm = ctx.firstRow('doc_34_drm_status.csv');
+      const rawFP = String(ctx.getField(drm, 'FILEPROCESS')).trim();
+      if (!rawFP) return notTestedResult(rule, ['doc_34_drm_status.csv'], 'FILEPROCESS was blank in the imported DRM status dataset.');
+      const fileProcess = rawFP;
+      const dbRow = ctx.firstRow('doc_02_db.csv');
+      const fullDevClass = String(ctx.getField(dbRow, 'FULL_DEV_CLASS')).trim().toUpperCase();
+      const isFileClass = fullDevClass === 'FILE';
+      const backups = ctx.rows('hc_02_db_backups.csv') || [];
+      const dbvBackups = backups.filter(row => {
+        const volName = String(ctx.getField(row, 'VOLUME_NAME')).toUpperCase();
+        const type = String(ctx.getField(row, 'TYPE')).toUpperCase();
+        return type === 'BACKUPFULL' && volName.includes('.DBV');
+      }).length;
+      const values = [
+        { label:'FILEPROCESS', value:fileProcess },
+        { label:'FULL_DEV_CLASS', value:fullDevClass || '—' },
+        { label:'FILE DB backups (.DBV)', value:String(dbvBackups) }
+      ];
+      if (/^no$/i.test(fileProcess) && !isFileClass && dbvBackups === 0) {
+        return makeRuleResult(rule, 'GREEN', values, 'File DB backup processing is OFF and there are no FILE DB backups.', `File DB backup processing is OFF (in DRMSTATUS) and there are no FILE DB backups (default devc is ${fullDevClass || '(unknown)'}). This is OK.`);
+      }
+      if (/^no$/i.test(fileProcess) && !isFileClass && dbvBackups > 0) {
+        return makeRuleResult(rule, 'RED', values, 'File DB backup processing is OFF but FILE DB backups exist.', `File DB backup processing is OFF (in DRMSTATUS) but there are FILE DB backups (default devc is ${fullDevClass || '(unknown)'}). Turn it on.`, { summaryBullet:'File DB backup processing is OFF in DRMSTATUS but FILE DB backups exist. Turn it on.' });
+      }
+      if (/^no$/i.test(fileProcess) && isFileClass) {
+        return makeRuleResult(rule, 'RED', values, 'File DB backup processing is OFF but a FILE class is the default device class.', `File DB backup processing is OFF (in DRMSTATUS) but a FILE class is the default devc (default devc is ${fullDevClass}). Turn it on.`, { summaryBullet:'File DB backup processing is OFF in DRMSTATUS but FILE device class is the default. Turn it on.' });
+      }
+      if (/^yes$/i.test(fileProcess)) {
+        const usingIt = isFileClass && dbvBackups > 0;
+        const notUsing = !isFileClass && dbvBackups === 0;
+        const rec = usingIt
+          ? `File DB backup processing is ON. This is OK regardless of whether it is being used (it is). DB Backups go to ${fullDevClass || '(unknown)'}`
+          : notUsing
+          ? `File DB backup processing is ON. This is OK regardless of whether it is being used (it isn't). DB Backups go to ${fullDevClass || '(unknown)'}`
+          : `File DB backup processing is ON. DB Backups go to ${fullDevClass || '(unknown)'}`;
+        return makeRuleResult(rule, 'GREEN', values, 'File DB backup processing is ON.', rec);
+      }
+      return notTestedResult(rule, ['doc_34_drm_status.csv'], `FILEPROCESS value '${fileProcess}' was not recognised (expected Yes or No).`);
     }
   },
   {
@@ -3720,9 +3769,16 @@ const HEALTHCHECK_RULES = [
     }
   },
   {
-    id:'schedmode', title:'Schedule Mode', section:'Scheduling & Sessions', perlRef:'HELIX get_the_variables lines 1292-1312', parityNote:'Perl evaluates STATUS.SCHEDMODE, but the current unified archive does not collect that exact field.', sources:['doc_01_status.csv'], threshold:'PROMPTED = warning; POLLING/ANY = OK', rationale:'Marked insufficient data rather than approximating from other STATUS columns.',
+    id:'schedmode', title:'Schedule Mode', section:'Scheduling & Sessions', perlRef:'HELIX get_the_variables lines 1292-1312', parityNote:'Perl evaluates STATUS.SCHEDMODE: PROMPTED = warning/amber; POLLING or ANY = OK/green.', sources:['doc_01_status.csv'], threshold:'PROMPTED = warning; POLLING/ANY = OK', rationale:'Uses STATUS.SCHEDMODE now collected in the unified archive.',
     evaluate(ctx, rule) {
-      return notTestedResult(rule, ['doc_01_status.csv'], 'The current archive does not include STATUS.SCHEDMODE, so this Perl rule cannot be reproduced exactly from imported data.');
+      const missing = requireDatasets(ctx, rule, ['doc_01_status.csv']);
+      if (missing) return notTestedResult(rule, missing);
+      const row = ctx.firstRow('doc_01_status.csv');
+      const value = String(ctx.getField(row, 'SCHEDMODE')).trim().toUpperCase();
+      if (!value) return notTestedResult(rule, ['doc_01_status.csv'], 'SCHEDMODE was blank in the imported status dataset.');
+      if (value === 'PROMPTED') return makeRuleResult(rule, 'AMBER', [{ label:'SCHEDMODE', value }], `Schedule mode is ${value}.`, 'PROMPTED would be unusual...!', { summaryBullet:'Schedule mode is PROMPTED which would be unusual. Review the schedule mode setting.' });
+      if (value === 'POLLING' || value === 'ANY') return makeRuleResult(rule, 'GREEN', [{ label:'SCHEDMODE', value }], `Schedule mode is ${value}.`, 'POLLING or ANY is generally OK and recommended');
+      return notTestedResult(rule, ['doc_01_status.csv'], `SCHEDMODE value '${value}' was not recognised by the Perl rule (expected POLLING, ANY, or PROMPTED).`);
     }
   },
   {
@@ -3767,15 +3823,27 @@ const HEALTHCHECK_RULES = [
     }
   },
   {
-    id:'summary_retention', title:'Summary Log Retention', section:'Server Settings', perlRef:'HELIX get_the_variables lines 1393-1417', parityNote:'Perl fails when SUMMARYRETENTION is below 30 days.', sources:['doc_01_status.csv'], threshold:'<30 days failed; >=30 OK', rationale:'The current unified archive does not collect SUMMARYRETENTION, so this rule is marked insufficient data.',
+    id:'summary_retention', title:'Summary Log Retention', section:'Server Settings', perlRef:'HELIX get_the_variables lines 1393-1417', parityNote:'Perl fails when SUMMARYRETENTION is below 30 days; equal to 30 is OK; above 30 is OK.', sources:['doc_01_status.csv'], threshold:'<30 days failed; >=30 OK', rationale:'Uses STATUS.SUMMARYRETENTION now collected in the unified archive.',
     evaluate(ctx, rule) {
-      return notTestedResult(rule, ['doc_01_status.csv'], 'The current archive does not include STATUS.SUMMARYRETENTION, which the Perl rule requires for exact parity.');
+      const missing = requireDatasets(ctx, rule, ['doc_01_status.csv']);
+      if (missing) return notTestedResult(rule, missing);
+      const row = ctx.firstRow('doc_01_status.csv');
+      const value = parseNumberValue(ctx.getField(row, 'SUMMARYRETENTION'));
+      if (value == null) return notTestedResult(rule, ['doc_01_status.csv'], 'SUMMARYRETENTION could not be parsed from the imported status dataset.');
+      if (value < 30) return makeRuleResult(rule, 'RED', [{ label:'Retention days', value:String(value) }], `Summary log retention is ${value} day(s).`, 'Less than the recommended 30 days.', { summaryBullet:`The summary log setting is too low at ${value} days and requires increasing to 30.` });
+      return makeRuleResult(rule, 'GREEN', [{ label:'Retention days', value:String(value) }], `Summary log retention is ${value} day(s).`, value === 30 ? 'Set to 30 days, the recommended level.' : 'Greater than 30 days but OK.');
     }
   },
   {
-    id:'event_retention', title:'Event Log Retention', section:'Server Settings', perlRef:'HELIX get_the_variables lines 1418-1441', parityNote:'Perl fails when EVENTRETENTION is below 30 days.', sources:['doc_01_status.csv'], threshold:'<30 days failed; >=30 OK', rationale:'The current unified archive does not collect EVENTRETENTION, so this rule is marked insufficient data.',
+    id:'event_retention', title:'Event Log Retention', section:'Server Settings', perlRef:'HELIX get_the_variables lines 1418-1441', parityNote:'Perl fails when EVENTRETENTION is below 30 days; equal to 30 is OK; above 30 is OK.', sources:['doc_01_status.csv'], threshold:'<30 days failed; >=30 OK', rationale:'Uses STATUS.EVENTRETENTION now collected in the unified archive.',
     evaluate(ctx, rule) {
-      return notTestedResult(rule, ['doc_01_status.csv'], 'The current archive does not include STATUS.EVENTRETENTION, which the Perl rule requires for exact parity.');
+      const missing = requireDatasets(ctx, rule, ['doc_01_status.csv']);
+      if (missing) return notTestedResult(rule, missing);
+      const row = ctx.firstRow('doc_01_status.csv');
+      const value = parseNumberValue(ctx.getField(row, 'EVENTRETENTION'));
+      if (value == null) return notTestedResult(rule, ['doc_01_status.csv'], 'EVENTRETENTION could not be parsed from the imported status dataset.');
+      if (value < 30) return makeRuleResult(rule, 'RED', [{ label:'Retention days', value:String(value) }], `Event log retention is ${value} day(s).`, 'Less than the recommended 30 days.', { summaryBullet:`The event log setting is too low at ${value} days and requires increasing to 30.` });
+      return makeRuleResult(rule, 'GREEN', [{ label:'Retention days', value:String(value) }], `Event log retention is ${value} day(s).`, value === 30 ? 'Set to 30 days, the recommended level.' : 'Greater than 30 days but OK.');
     }
   },
   {
@@ -3866,9 +3934,24 @@ const HEALTHCHECK_RULES = [
     }
   },
   {
-    id:'nodes_defined_info', title:'Nodes Defined / Unique', section:'Informational Only', perlRef:'HELIX get_the_variables lines 1611-1616', parityNote:'Perl collects this for display only and does not change the traffic light.', sources:['doc_07_nodes.csv'], threshold:'Informational only', rationale:'Shown as informational because the Perl code collects the counts without any rule branch.',
+    id:'nodes_defined_info', title:'Nodes Defined / Unique', section:'Informational Only', perlRef:'HELIX get_the_variables lines 1611-1616', parityNote:'Perl collects count(nodes) and count(unique(TCP_ADDRESS)) for display only and does not change the traffic light. Blank/null addresses are excluded from the unique count.', sources:['doc_07_nodes.csv'], threshold:'Informational only', rationale:'Uses doc_07_nodes.csv with TCP_ADDRESS now collected; blank/null addresses excluded from unique count as in the Perl query.',
     evaluate(ctx, rule) {
-      return notTestedResult(rule, ['doc_07_nodes.csv'], 'The current archive does not collect the exact TCP_ADDRESS field used by the Perl display-only node uniqueness item.');
+      const missing = requireDatasets(ctx, rule, ['doc_07_nodes.csv']);
+      if (missing) return notTestedResult(rule, missing);
+      const data = ctx.getData('doc_07_nodes.csv');
+      const hasTcpAddress = data && Array.isArray(data.headers) && data.headers.some(h => canonicalHeaderName(h) === 'TCPADDRESS');
+      if (!hasTcpAddress) return notTestedResult(rule, ['doc_07_nodes.csv'], 'The imported doc_07_nodes.csv does not include TCP_ADDRESS (older archive). Re-collect to enable this rule.');
+      const rows = ctx.rows('doc_07_nodes.csv') || [];
+      const totalNodes = rows.length;
+      const uniqueAddresses = new Set(
+        rows.map(row => String(ctx.getField(row, 'TCP_ADDRESS')).trim())
+          .filter(addr => addr && addr.toUpperCase() !== 'NULL')
+      ).size;
+      const values = [
+        { label:'Total nodes', value:String(totalNodes) },
+        { label:'Unique TCP addresses (non-blank)', value:String(uniqueAddresses) }
+      ];
+      return makeRuleResult(rule, 'INFO', values, `${totalNodes} node(s) defined; ${uniqueAddresses} unique TCP address(es).`, `There are ${totalNodes} defined nodes with ${uniqueAddresses} unique TCP addresses (blank/null addresses excluded, as per Perl parity).`);
     }
   },
   {
@@ -3975,9 +4058,22 @@ const HEALTHCHECK_RULES = [
     }
   },
   {
-    id:'scratch_tape_warnings', title:'Scratch Tape Warnings', section:'Informational Only', perlRef:'HELIX get_the_variables lines 1777-1785', parityNote:'Perl scans the full activity-log-retention period for specific scratch warning MSGNOs.', sources:['hc_18_actlog_errors.csv', 'doc_01_status.csv'], threshold:'Informational only; current archive lacks full-retention actlog coverage', rationale:'The current archive only includes 48 hours of actlog warnings, not the full actlog-retention window required by the Perl rule.',
+    id:'scratch_tape_warnings', title:'Scratch Tape Warnings', section:'Informational Only', perlRef:'HELIX get_the_variables lines 1777-1785', parityNote:'Perl counts matching ACTLOG messages over the full activity-log-retention period; zero = no shortage; positive count = review action. Does not change the overall traffic-light colour.', sources:['hc_35_scratch_warnings.csv'], threshold:'Informational only; zero warnings = OK; positive count = action recommended', rationale:'Uses the full-retention ACTLOG aggregate (hc_35_scratch_warnings.csv) with the nine Perl MSGNO values, matching MSGNO as integers in SQL.',
     evaluate(ctx, rule) {
-      return notTestedResult(rule, ['hc_18_actlog_errors.csv'], 'The current archive includes only 48 hours of activity-log warnings, but the Perl rule scans the full activity-log-retention period for scratch-tape shortage messages.');
+      const missing = requireDatasets(ctx, rule, ['hc_35_scratch_warnings.csv']);
+      if (missing) return notTestedResult(rule, missing);
+      const rows = ctx.rows('hc_35_scratch_warnings.csv') || [];
+      let total = 0;
+      rows.forEach(row => {
+        const count = parseNumberValue(ctx.getField(row, 'WARNING_COUNT'));
+        if (count != null) total += count;
+      });
+      const ZERO_PADDED_MSGNOS = ['0692','1403','1404','1405','1407','3516','4583','6984','8945'];
+      const values = [{ label:'Total scratch-warning messages', value:String(total) }];
+      if (total === 0) {
+        return makeRuleResult(rule, 'INFO', values, 'No scratch-tape shortage warnings were found.', `There have been no warnings about lack of scratch tapes using analysis of the most common messages (${ZERO_PADDED_MSGNOS.join(', ')}) over the period of the activity log retention. If the administrator knows otherwise then more scratch should be freed up or added.`);
+      }
+      return makeRuleResult(rule, 'INFO', values, `${total} scratch-tape shortage warning(s) were found.`, `There have been ${total} warnings about lack of scratch tapes in this environment using analysis of the most common messages (${ZERO_PADDED_MSGNOS.join(', ')}) over the period of the activity log retention. Action should be taken to make more scratch media available and reclamation and drm procedures should be reviewed. The maxscratch settings should be reviewed.`, { summaryBullet:'There have been warnings for scratch tapes. Review the number of tapes available and the maxscratch setting on the storage pools.' });
     }
   },
   {
@@ -4104,9 +4200,42 @@ const HEALTHCHECK_RULES = [
     }
   },
   {
-    id:'tape_mounts_info', title:'Tape Mount Utilisation', section:'Informational Only', perlRef:'HELIX get_the_variables lines 1976-2008', parityNote:'Perl analyses 7 days of TAPE MOUNT summary durations and drive count, but the current archive does not collect that exact data.', sources:['doc_23_drives.csv', 'hc_20_summary_overview.csv'], threshold:'Informational only', rationale:'The current unified archive lacks per-run TAPE MOUNT duration data, so this rule is marked insufficient data instead of approximated from grouped summary counts.',
+    id:'tape_mounts_info', title:'Tape Mount Utilisation', section:'Informational Only', perlRef:'HELIX get_the_variables lines 1976-2008', parityNote:'Perl calculates utilisation = int((total mount minutes / (drives × 10080)) × 100) over 168 hours; <50% good; 50-74% high; >=75% extremely high; <=2 drives adds low-drive-count note. Does not change the traffic-light colour.', sources:['hc_36_tape_mounts.csv'], threshold:'Informational only; <50% good; 50-74% high; >=75% extremely high', rationale:'Uses hc_36_tape_mounts.csv (DRIVE_COUNT and TOTAL_MOUNT_MINUTES) to reproduce the Perl calculation exactly, including the low-drive-count note when drives<=2.',
     evaluate(ctx, rule) {
-      return notTestedResult(rule, ['hc_20_summary_overview.csv'], 'The current archive does not include per-run TAPE MOUNT durations, which the Perl rule requires for exact drive-utilisation analysis.');
+      const missing = requireDatasets(ctx, rule, ['hc_36_tape_mounts.csv']);
+      if (missing) return notTestedResult(rule, missing);
+      const row = ctx.firstRow('hc_36_tape_mounts.csv');
+      if (!row) return notTestedResult(rule, ['hc_36_tape_mounts.csv'], 'No rows returned by the tape-mount query.');
+      const driveCount = parseNumberValue(ctx.getField(row, 'DRIVE_COUNT'));
+      const mountMinutes = parseNumberValue(ctx.getField(row, 'TOTAL_MOUNT_MINUTES'));
+      if (driveCount == null) return notTestedResult(rule, ['hc_36_tape_mounts.csv'], 'DRIVE_COUNT could not be parsed from the tape-mount dataset.');
+      const mountMins = mountMinutes != null ? mountMinutes : 0;
+      const values = [
+        { label:'Drive count', value:String(driveCount) },
+        { label:'Total mount minutes (168 hrs)', value:String(mountMins) }
+      ];
+      if (driveCount === 0) {
+        return makeRuleResult(rule, 'INFO', values, 'There are no drives controlled by this instance.', '======= There are no drives controlled by this instance - THE INFORMATION IN THIS SECTION CAN BE DELETED =======');
+      }
+      const utilPct = Math.trunc((mountMins / (driveCount * 10080)) * 100);
+      values.push({ label:'Utilisation', value:`${utilPct}%` });
+      let recommendation;
+      let bullet;
+      if (utilPct < 50) {
+        recommendation = 'Drive utilisation is good at less than 50%. There are no recommendations here.';
+      } else if (utilPct < 75) {
+        recommendation = `Drive utilisation is high at ${utilPct}%. More drives may be required, however the utilisation of any disk pools or other client processes like HSM may need investigating.`;
+        bullet = recommendation;
+      } else {
+        recommendation = `Drive utilisation is extremely high at ${utilPct}%. More drives will almost certainly be required if the current utilisation is typical. The utilisation of any disk pools or other client processes like HSM may need investigating.`;
+        bullet = recommendation;
+      }
+      if (driveCount <= 2) {
+        recommendation = `${recommendation}. The number of drives is low at ${driveCount}. Further analysis may be required as to whether this is enough mount points.`;
+        bullet = recommendation;
+      }
+      const opts = bullet ? { summaryBullet: bullet } : undefined;
+      return makeRuleResult(rule, 'INFO', values, `Tape drive utilisation is ${utilPct}% over the last 168 hours.`, recommendation, opts);
     }
   }
 ];
