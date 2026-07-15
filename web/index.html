@@ -185,12 +185,12 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       <div class="fg">
         <label>Windows Output Directory</label>
         <input type="text" id="outputDirWindows" value="StorageTools_Output">
-        <span class="hint">CSV output folder for <code>.cmd</code> scripts. The default <code>StorageTools_Output</code> is a relative path that works without any path-separator concerns. Use backslashes for absolute paths (e.g. <code>C:\TSM\Output</code>).</span>
+        <span class="hint">Output folder for <code>.cmd</code> scripts. Relative paths resolve from the directory where the script is run; absolute paths can be drive-root (e.g. <code>C:\Data\Out</code>) or UNC (e.g. <code>\\server\share\Out</code>).</span>
       </div>
       <div class="fg">
         <label>Unix/Linux Output Directory</label>
         <input type="text" id="outputDirUnix" value="StorageTools_Output">
-        <span class="hint">CSV output folder for <code>.sh</code> scripts. Use forward slashes for absolute paths (e.g. <code>/tmp/st_output</code>).</span>
+        <span class="hint">Output folder for <code>.sh</code> scripts. Relative paths resolve from the directory where the script is run; absolute paths start with <code>/</code>.</span>
       </div>
     </div>
     <div style="margin-top:16px" class="actions">
@@ -1134,8 +1134,8 @@ function cmdSafeSetValue(value) {
 
 function buildCmdLine(cfg, query) {
   const sql      = escapeForCmd(query.sql);
-  const outFile  = `%OUTDIR%\\${query.outputFile}`;
-  return `"%DSMADMC%" -id="%ADMID%" -pa="%ADMPA%" %OPTARG% -commadelimited "${sql}" > "${outFile}" 2>"%OUTDIR%\\qerr.tmp"`;
+  const outFile  = `%WORKDIR%\\${query.outputFile}`;
+  return `"%DSMADMC%" -id="%ADMID%" -pa="%ADMPA%" %OPTARG% -commadelimited "${sql}" > "${outFile}" 2>"%WORKDIR%\\qerr.tmp"`;
 }
 
 function getOptionalWarnFlag(query) {
@@ -1179,7 +1179,10 @@ function generateCmdContent() {
   lines.push(`SET "DSMADMC=${cfg.dsmadmcPath || DEFAULT_WINDOWS_DSMADMC}"`);
   lines.push(`SET "ADMID=${cfg.adminId || DEFAULT_ADMIN_ID}"`);
   lines.push(`SET "ADMPA=${cfg.adminPa || 'PASSWORD'}"`);
-  lines.push(`SET "OUTDIR=${cfg.outputDirWindows || DEFAULT_OUTPUT_DIR}"`);
+  lines.push(`SET "OUTDIR_RAW=${cmdSafeSetValue(cfg.outputDirWindows || DEFAULT_OUTPUT_DIR)}"`);
+  lines.push('SET "LAUNCH_DIR=%CD%"');
+  lines.push('SET "OUTDIR=%OUTDIR_RAW%"');
+  lines.push('IF NOT "%OUTDIR_RAW:~1,1%"==":" IF NOT "%OUTDIR_RAW:~0,2%"=="\\\\" SET "OUTDIR=%LAUNCH_DIR%\\%OUTDIR_RAW%"');
   lines.push('');
   lines.push('REM Option file - leave blank if not required');
   lines.push(`SET "OPTFILE=${cfg.optfileWindows || DEFAULT_WINDOWS_OPTFILE}"`);
@@ -1187,12 +1190,18 @@ function generateCmdContent() {
   lines.push('IF NOT "%OPTFILE%"=="" SET OPTARG=-optfile="%OPTFILE%"');
   lines.push('');
   lines.push('IF NOT EXIST "%OUTDIR%" MKDIR "%OUTDIR%"');
+  lines.push('SET "WORKDIR=%OUTDIR%\\.work_%RANDOM%_%RANDOM%_%TIME:~6,2%"');
+  lines.push('IF NOT EXIST "%WORKDIR%" MKDIR "%WORKDIR%"');
+  lines.push('IF NOT EXIST "%WORKDIR%" (');
+  lines.push('  echo [FATAL] Unable to create working directory: %WORKDIR% 1>&2');
+  lines.push('  EXIT /B 1');
+  lines.push(')');
   lines.push('');
   lines.push('REM Verify tar is available');
   lines.push('where tar >NUL 2>&1');
   lines.push('IF %ERRORLEVEL% NEQ 0 (');
   lines.push('  echo [FATAL] tar is not available -- install bsdtar/tar before running this script 1>&2');
-  lines.push('  echo %DATE% %TIME% [FATAL] tar not found -- collection aborted >> "%OUTDIR%\\collection_log.txt"');
+  lines.push('  echo %DATE% %TIME% [FATAL] tar not found -- collection aborted >> "%WORKDIR%\\collection_log.txt"');
   lines.push('  EXIT /B 1');
   lines.push(')');
   lines.push('');
@@ -1207,34 +1216,35 @@ function generateCmdContent() {
   lines.push('echo =================================================================');
   lines.push('echo Started: %DATE% %TIME%');
   lines.push('echo Output  : %OUTDIR%');
+  lines.push('echo Working : %WORKDIR%');
   lines.push('echo.');
   lines.push('');
-  lines.push('echo %DATE% %TIME% -- complete collection started > "%OUTDIR%\\collection_log.txt"');
-  lines.push(`echo Customer: ${cfg.customerName || '(not set)'} >> "%OUTDIR%\\collection_log.txt"`);
-  lines.push(`echo Server  : ${cfg.serverName   || '(not set)'} >> "%OUTDIR%\\collection_log.txt"`);
+  lines.push('echo %DATE% %TIME% -- complete collection started > "%WORKDIR%\\collection_log.txt"');
+  lines.push(`echo Customer: ${cfg.customerName || '(not set)'} >> "%WORKDIR%\\collection_log.txt"`);
+  lines.push(`echo Server  : ${cfg.serverName   || '(not set)'} >> "%WORKDIR%\\collection_log.txt"`);
   lines.push('');
-  lines.push('type nul > "%OUTDIR%\\collection_errors.log"');
+  lines.push('type nul > "%WORKDIR%\\collection_errors.log"');
   lines.push('');
   lines.push('echo Checking server connection and credentials...');
-  lines.push('"%DSMADMC%" -id="%ADMID%" -pa="%ADMPA%" %OPTARG% -commadelimited "QUERY SESSION" > NUL 2>"%OUTDIR%\\preflight.tmp"');
+  lines.push('"%DSMADMC%" -id="%ADMID%" -pa="%ADMPA%" %OPTARG% -commadelimited "QUERY SESSION" > NUL 2>"%WORKDIR%\\preflight.tmp"');
   lines.push('SET PREFLIGHT_RC=%ERRORLEVEL%');
   lines.push('SET PREFLIGHT_AUTH=1');
-  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" FINDSTR /I "ANS1051I" "%OUTDIR%\\preflight.tmp" > NUL 2>&1 && SET PREFLIGHT_AUTH=0');
+  lines.push('IF EXIST "%WORKDIR%\\preflight.tmp" FINDSTR /I "ANS1051I" "%WORKDIR%\\preflight.tmp" > NUL 2>&1 && SET PREFLIGHT_AUTH=0');
   lines.push('IF NOT %PREFLIGHT_RC%==0 GOTO :PREFLIGHT_FAIL');
   lines.push('IF %PREFLIGHT_AUTH%==0 GOTO :PREFLIGHT_FAIL');
   lines.push('echo Preflight OK -- connection verified.');
   lines.push('echo.');
-  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" DEL "%OUTDIR%\\preflight.tmp"');
+  lines.push('IF EXIST "%WORKDIR%\\preflight.tmp" DEL "%WORKDIR%\\preflight.tmp"');
   lines.push('GOTO :QUERIES_START');
   lines.push('');
   lines.push(':PREFLIGHT_FAIL');
   lines.push('CALL :RCInfo %PREFLIGHT_RC%');
   lines.push('echo [FATAL] Preflight authentication/connection check failed (rc=%PREFLIGHT_RC% %RC_SYM% - %RC_DESC%) 1>&2');
-  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" TYPE "%OUTDIR%\\preflight.tmp" 1>&2');
-  lines.push('echo --- PREFLIGHT FAILED (rc=%PREFLIGHT_RC% %RC_SYM% - %RC_DESC%) --- >> "%OUTDIR%\\collection_errors.log"');
-  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" TYPE "%OUTDIR%\\preflight.tmp" >> "%OUTDIR%\\collection_errors.log"');
-  lines.push('echo %DATE% %TIME% [FATAL] Preflight failed rc=%PREFLIGHT_RC% %RC_SYM% - %RC_DESC% -- collection aborted >> "%OUTDIR%\\collection_log.txt"');
-  lines.push('IF EXIST "%OUTDIR%\\preflight.tmp" DEL "%OUTDIR%\\preflight.tmp"');
+  lines.push('IF EXIST "%WORKDIR%\\preflight.tmp" TYPE "%WORKDIR%\\preflight.tmp" 1>&2');
+  lines.push('echo --- PREFLIGHT FAILED (rc=%PREFLIGHT_RC% %RC_SYM% - %RC_DESC%) --- >> "%WORKDIR%\\collection_errors.log"');
+  lines.push('IF EXIST "%WORKDIR%\\preflight.tmp" TYPE "%WORKDIR%\\preflight.tmp" >> "%WORKDIR%\\collection_errors.log"');
+  lines.push('echo %DATE% %TIME% [FATAL] Preflight failed rc=%PREFLIGHT_RC% %RC_SYM% - %RC_DESC% -- collection aborted >> "%WORKDIR%\\collection_log.txt"');
+  lines.push('IF EXIST "%WORKDIR%\\preflight.tmp" DEL "%WORKDIR%\\preflight.tmp"');
   lines.push('EXIT /B 1');
   lines.push('');
   lines.push(':QUERIES_START');
@@ -1263,12 +1273,12 @@ function generateCmdContent() {
     lines.push('CALL :HandleQueryStderr');
     lines.push('IF %QRC%==0 IF "%QERR_HAS_STDERR%"=="1" SET QSTATUS=[WARN]');
     lines.push('echo   %QSTATUS% "%Q_LABEL%" (rc=%QRC% %RC_SYM% -- %RC_DESC%)');
-    lines.push('echo %DATE% %TIME% %QSTATUS% "%Q_LABEL%" rc=%QRC% %RC_SYM% -- %RC_DESC% >> "%OUTDIR%\\collection_log.txt"');
+    lines.push('echo %DATE% %TIME% %QSTATUS% "%Q_LABEL%" rc=%QRC% %RC_SYM% -- %RC_DESC% >> "%WORKDIR%\\collection_log.txt"');
     lines.push('IF "%QSTATUS%"=="[FAILED]" SET /A FAIL_COUNT+=1');
     lines.push('IF "%QSTATUS%"=="[WARN]"   SET /A WARN_COUNT+=1');
     lines.push('IF "%QSTATUS%"=="[OK]"     SET /A PASS_COUNT+=1');
     lines.push('IF %ANS1051_FATAL%==1 echo [FATAL] ANS1051I authentication failure detected -- aborting collection 1>&2');
-    lines.push('IF %ANS1051_FATAL%==1 echo %DATE% %TIME% [FATAL] ANS1051I in "%Q_LABEL%" -- collection aborted >> "%OUTDIR%\\collection_log.txt"');
+    lines.push('IF %ANS1051_FATAL%==1 echo %DATE% %TIME% [FATAL] ANS1051I in "%Q_LABEL%" -- collection aborted >> "%WORKDIR%\\collection_log.txt"');
     lines.push('IF %ANS1051_FATAL%==1 EXIT /B 1');
     lines.push('');
   });
@@ -1279,13 +1289,13 @@ function generateCmdContent() {
   lines.push('echo Results saved to: %OUTDIR%');
   lines.push('echo.');
   lines.push('echo Passed: %PASS_COUNT%  Warned: %WARN_COUNT%  Failed: %FAIL_COUNT%');
-  lines.push('echo Per-query status: "%OUTDIR%\\collection_log.txt"');
-  lines.push('echo Errors (if any) : "%OUTDIR%\\collection_errors.log"');
+  lines.push('echo Per-query status: "%WORKDIR%\\collection_log.txt"');
+  lines.push('echo Errors (if any) : "%WORKDIR%\\collection_errors.log"');
   lines.push('echo.');
   lines.push('echo *** REMINDER: Delete this CMD file after generating your report! ***');
   lines.push('echo =================================================================');
   lines.push('');
-  lines.push('echo %DATE% %TIME% -- collection complete (passed=%PASS_COUNT% warned=%WARN_COUNT% failed=%FAIL_COUNT%) >> "%OUTDIR%\\collection_log.txt"');
+  lines.push('echo %DATE% %TIME% -- collection complete (passed=%PASS_COUNT% warned=%WARN_COUNT% failed=%FAIL_COUNT%) >> "%WORKDIR%\\collection_log.txt"');
   lines.push('');
   lines.push('REM ── Archive packaging ──────────────────────────────────────────────────');
   lines.push(`SET "ARCHIVE_SERVER=${serverSafe}"`);
@@ -1299,12 +1309,9 @@ function generateCmdContent() {
   lines.push('  SET "ARCHIVE_TS=%ARCHIVE_TS: =0%"');
   lines.push('  SET "GEN_UTC=(unavailable)"');
   lines.push(')');
-  lines.push('PUSHD "%OUTDIR%\\.."');
-  lines.push('SET "OUTPARENT=%CD%"');
-  lines.push('POPD');
   lines.push('SET "ARCHIVE_BASE=StorageTools_Complete_%ARCHIVE_SERVER%_%ARCHIVE_TS%.tar"');
-  lines.push('SET "ARCHIVE_FILE=%OUTPARENT%\\%ARCHIVE_BASE%"');
-  lines.push('SET "ARCHIVE_TMP=%ARCHIVE_FILE%.tmp"');
+  lines.push('SET "ARCHIVE_FILE=%OUTDIR%\\%ARCHIVE_BASE%"');
+  lines.push('SET "ARCHIVE_TMP=%OUTDIR%\\%ARCHIVE_BASE%.tmp"');
   lines.push('');
   lines.push('REM Write manifest');
   lines.push('(');
@@ -1313,34 +1320,45 @@ function generateCmdContent() {
   lines.push(`  echo customer=${manifestCustomer}`);
   lines.push(`  echo server_label=${manifestServer}`);
   lines.push(`  echo query_count=${total}`);
-  lines.push(') > "%OUTDIR%\\manifest.txt"');
-  lines.push('echo generated_utc=%GEN_UTC% >> "%OUTDIR%\\manifest.txt"');
-  lines.push('echo passed=%PASS_COUNT% >> "%OUTDIR%\\manifest.txt"');
-  lines.push('echo warned=%WARN_COUNT% >> "%OUTDIR%\\manifest.txt"');
-  lines.push('echo failed=%FAIL_COUNT% >> "%OUTDIR%\\manifest.txt"');
+  lines.push(') > "%WORKDIR%\\manifest.txt"');
+  lines.push('echo generated_utc=%GEN_UTC% >> "%WORKDIR%\\manifest.txt"');
+  lines.push('echo passed=%PASS_COUNT% >> "%WORKDIR%\\manifest.txt"');
+  lines.push('echo warned=%WARN_COUNT% >> "%WORKDIR%\\manifest.txt"');
+  lines.push('echo failed=%FAIL_COUNT% >> "%WORKDIR%\\manifest.txt"');
   lines.push('');
-  lines.push('echo Creating collection archive: %ARCHIVE_BASE%');
-  lines.push('tar -cf "%ARCHIVE_TMP%" -C "%OUTDIR%" .');
+  lines.push('echo Resolved output folder: %OUTDIR%');
+  lines.push('echo Creating collection archive in output folder: %ARCHIVE_FILE%');
+  lines.push('tar -cf "%ARCHIVE_TMP%" -C "%WORKDIR%" .');
   lines.push('IF %ERRORLEVEL% NEQ 0 (');
   lines.push('  IF EXIST "%ARCHIVE_TMP%" DEL /Q "%ARCHIVE_TMP%"');
-  lines.push('  echo [WARN] Archive creation failed; individual files retained in: %OUTDIR% 1>&2');
-  lines.push('  echo %DATE% %TIME% [WARN] archive creation failed -- files retained in %OUTDIR% >> "%OUTDIR%\\collection_log.txt"');
+  lines.push('  echo [WARN] Archive creation failed; diagnostic files retained in: %WORKDIR% 1>&2');
+  lines.push('  echo %DATE% %TIME% [WARN] archive creation failed -- diagnostic files retained in %WORKDIR% >> "%WORKDIR%\\collection_log.txt"');
   lines.push('  GOTO :SKIP_CLEANUP');
   lines.push(')');
   lines.push('FOR %%S IN ("%ARCHIVE_TMP%") DO IF %%~zS GTR 0 (');
   lines.push('  MOVE /Y "%ARCHIVE_TMP%" "%ARCHIVE_FILE%" >NUL');
   lines.push('  echo Archive created: %ARCHIVE_FILE%');
-  lines.push('  echo %DATE% %TIME% archive created: %ARCHIVE_FILE% >> "%OUTDIR%\\collection_log.txt"');
-  lines.push('  RD /S /Q "%OUTDIR%"');
+  lines.push('  echo %DATE% %TIME% archive created: %ARCHIVE_FILE% >> "%WORKDIR%\\collection_log.txt"');
+  lines.push('  IF /I "%WORKDIR%"=="." (');
+  lines.push('    echo [WARN] Working directory safety check failed; diagnostic files retained in: %WORKDIR% 1>&2');
+  lines.push('  ) ELSE IF /I "%WORKDIR%"==".." (');
+  lines.push('    echo [WARN] Working directory safety check failed; diagnostic files retained in: %WORKDIR% 1>&2');
+  lines.push('  ) ELSE IF /I "%WORKDIR%"=="%OUTDIR%" (');
+  lines.push('    echo [WARN] Working directory safety check failed; diagnostic files retained in: %WORKDIR% 1>&2');
+  lines.push('  ) ELSE (');
+  lines.push('    RD /S /Q "%WORKDIR%"');
+  lines.push('  )');
+  lines.push('  echo Temporary working files removed: %WORKDIR%');
   lines.push('  echo =================================================================');
   lines.push('  echo Collection archive: %ARCHIVE_FILE%');
+  lines.push('  echo Output folder retained: %OUTDIR%');
   lines.push('  echo Import this single archive into StorageTools to generate your XLSX report.');
   lines.push('  echo =================================================================');
   lines.push('  GOTO :SKIP_CLEANUP');
   lines.push(')');
   lines.push('IF EXIST "%ARCHIVE_TMP%" DEL /Q "%ARCHIVE_TMP%"');
-  lines.push('echo [WARN] Archive created but is empty; individual files retained in: %OUTDIR% 1>&2');
-  lines.push('echo %DATE% %TIME% [WARN] archive empty -- files retained in %OUTDIR% >> "%OUTDIR%\\collection_log.txt"');
+  lines.push('echo [WARN] Archive created but is empty; diagnostic files retained in: %WORKDIR% 1>&2');
+  lines.push('echo %DATE% %TIME% [WARN] archive empty -- diagnostic files retained in %WORKDIR% >> "%WORKDIR%\\collection_log.txt"');
   lines.push(':SKIP_CLEANUP');
   lines.push('');
   lines.push('endlocal');
@@ -1388,16 +1406,16 @@ function generateCmdContent() {
   lines.push('SET "QERR_HAS_STDERR=0"');
   lines.push('SET "QERR_BYTES=0"');
   lines.push('SET "ANS1051_FATAL=0"');
-  lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO SET "QERR_BYTES=%%~zS"');
+  lines.push('IF EXIST "%WORKDIR%\\qerr.tmp" FOR %%S IN ("%WORKDIR%\\qerr.tmp") DO SET "QERR_BYTES=%%~zS"');
   lines.push('IF %QERR_BYTES% GTR 0 SET "QERR_HAS_STDERR=1"');
   lines.push('IF "%QERR_HAS_STDERR%"=="1" echo --- Stderr for "%Q_LABEL%" ---');
-  lines.push('IF "%QERR_HAS_STDERR%"=="1" TYPE "%OUTDIR%\\qerr.tmp"');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" TYPE "%WORKDIR%\\qerr.tmp"');
   lines.push('IF "%QERR_HAS_STDERR%"=="1" echo --- End stderr ---');
-  lines.push('IF "%QERR_HAS_STDERR%"=="1" echo %DATE% %TIME% --- "%Q_LABEL%" --- >> "%OUTDIR%\\collection_errors.log"');
-  lines.push('IF "%QERR_HAS_STDERR%"=="1" TYPE "%OUTDIR%\\qerr.tmp" >> "%OUTDIR%\\collection_errors.log"');
-  lines.push('IF "%QERR_HAS_STDERR%"=="1" echo. >> "%OUTDIR%\\collection_errors.log"');
-  lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" FINDSTR /I "ANS1051I" "%OUTDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"');
-  lines.push('IF EXIST "%OUTDIR%\\qerr.tmp" DEL "%OUTDIR%\\qerr.tmp"');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" echo %DATE% %TIME% --- "%Q_LABEL%" --- >> "%WORKDIR%\\collection_errors.log"');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" TYPE "%WORKDIR%\\qerr.tmp" >> "%WORKDIR%\\collection_errors.log"');
+  lines.push('IF "%QERR_HAS_STDERR%"=="1" echo. >> "%WORKDIR%\\collection_errors.log"');
+  lines.push('IF EXIST "%WORKDIR%\\qerr.tmp" FINDSTR /I "ANS1051I" "%WORKDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"');
+  lines.push('IF EXIST "%WORKDIR%\\qerr.tmp" DEL "%WORKDIR%\\qerr.tmp"');
   lines.push('GOTO :EOF');
 
   return lines.join('\r\n');
@@ -1423,7 +1441,7 @@ function buildShLine(query, numStr, total) {
   const title = shellQuote(query.title);
   const num   = shellQuote(`${numStr}/${total}`);
   const warnIfMissingQuoted = shellQuote(getOptionalWarnFlag(query));
-  return `run_query ${num} ${title} ${warnIfMissingQuoted} ${sql} "$OUTDIR/${query.outputFile}"`;
+  return `run_query ${num} ${title} ${warnIfMissingQuoted} ${sql} "$WORKDIR/${query.outputFile}"`;
 }
 
 function generateShContent() {
@@ -1456,11 +1474,18 @@ function generateShContent() {
   lines.push(`ADMID=${shellQuote(cfg.adminId || 'ADMINUSER')}`);
   lines.push(`ADMPA=${shellQuote(cfg.adminPa || 'PASSWORD')}`);
   lines.push(`OPTFILE=${shellQuote(cfg.optfileUnix || '')}`);
-  lines.push(`OUTDIR=${shellQuote(cfg.outputDirUnix || DEFAULT_OUTPUT_DIR)}`);
+  lines.push(`OUTDIR_RAW=${shellQuote(cfg.outputDirUnix || DEFAULT_OUTPUT_DIR)}`);
+  lines.push('LAUNCH_DIR=$(pwd -P 2>/dev/null || pwd)');
+  lines.push('case "$OUTDIR_RAW" in');
+  lines.push('  /*) OUTDIR="$OUTDIR_RAW" ;;');
+  lines.push('  *) OUTDIR="$LAUNCH_DIR/$OUTDIR_RAW" ;;');
+  lines.push('esac');
   lines.push(`CUSTOMER=${shellQuote(cfg.customerName || '(not set)')}`);
   lines.push(`SERVER=${shellQuote(cfg.serverName || '(not set)')}`);
-  lines.push('LOGFILE="$OUTDIR/collection_log.txt"');
-  lines.push('ERRLOG="$OUTDIR/collection_errors.log"');
+  lines.push('RUN_ID="$(date -u \'+%Y%m%d_%H%M%S\' 2>/dev/null || date \'+%Y%m%d_%H%M%S\')_$$"');
+  lines.push('WORKDIR="$OUTDIR/.work_${RUN_ID}"');
+  lines.push('LOGFILE="$WORKDIR/collection_log.txt"');
+  lines.push('ERRLOG="$WORKDIR/collection_errors.log"');
   lines.push('PASS_COUNT=0');
   lines.push('FAIL_COUNT=0');
   lines.push('WARN_COUNT=0');
@@ -1469,11 +1494,23 @@ function generateShContent() {
   lines.push('ARCHIVE_TMP=""');
   lines.push('');
   lines.push('mkdir -p "$OUTDIR"');
+  lines.push('mkdir -p "$WORKDIR"');
+  lines.push('if [ ! -d "$WORKDIR" ]; then');
+  lines.push("  printf '%s\\n' \"[FATAL] Unable to create working directory: $WORKDIR\" >&2");
+  lines.push('  exit 1');
+  lines.push('fi');
   lines.push('');
   lines.push(': > "$LOGFILE"');
   lines.push(': > "$ERRLOG"');
   lines.push('');
   lines.push('cleanup() { [ -n "$QTMP" ] && rm -f "$QTMP"; [ -n "$PREFLIGHT_TMP" ] && rm -f "$PREFLIGHT_TMP"; [ -n "$ARCHIVE_TMP" ] && rm -f "$ARCHIVE_TMP"; }');
+  lines.push('safe_remove_workdir() {');
+  lines.push('  case "$1" in');
+  lines.push('    ""|"/"|"."|"./"|".."|"../"|"$OUTDIR"|"$LAUNCH_DIR") return 1 ;;');
+  lines.push('    "$OUTDIR"/.work_*) rm -rf "$1" ;;');
+  lines.push('    *) return 1 ;;');
+  lines.push('  esac');
+  lines.push('}');
   lines.push('trap cleanup EXIT INT TERM');
   lines.push('');
   lines.push('# Verify tar is available before starting collection');
@@ -1490,6 +1527,7 @@ function generateShContent() {
   lines.push('echo "================================================================="');
   lines.push('echo "Started: $(date)"');
   lines.push('echo "Output : $OUTDIR"');
+  lines.push('echo "Working: $WORKDIR"');
   lines.push('echo');
   lines.push('');
   lines.push("printf '%s\n' \"$(date) — complete collection started\" >> \"$LOGFILE\"");
@@ -1541,7 +1579,7 @@ function generateShContent() {
   lines.push('#   RC_NOTABLE to WARN for optional views, QSQL=statement, QOUT=CSV file.');
   lines.push('run_query() {');
   lines.push('  QNUM="$1"; QTITLE="$2"; QWARNMISSING="$3"; QSQL="$4"; QOUT="$5"');
-  lines.push('  QTMP="$(mktemp 2>/dev/null)" || QTMP="${OUTDIR}/q$$.tmp"');
+  lines.push('  QTMP="$(mktemp "$WORKDIR/qerr.XXXXXX" 2>/dev/null)" || QTMP="${WORKDIR}/q$$.tmp"');
   lines.push('  echo "[$QNUM] $QTITLE..."');
   lines.push('  run_dsmadmc "$QSQL" > "$QOUT" 2>"$QTMP"');
   lines.push('  QRC=$?');
@@ -1579,7 +1617,7 @@ function generateShContent() {
   lines.push('  fi');
   lines.push('}');
   lines.push('');
-  lines.push('PREFLIGHT_TMP="$(mktemp 2>/dev/null)" || PREFLIGHT_TMP="${OUTDIR}/preflight$$.tmp"');
+  lines.push('PREFLIGHT_TMP="$(mktemp "$WORKDIR/preflight.XXXXXX" 2>/dev/null)" || PREFLIGHT_TMP="${WORKDIR}/preflight$$.tmp"');
   lines.push('echo "Checking server connection and credentials..."');
   lines.push("run_dsmadmc 'QUERY SESSION' > /dev/null 2>\"$PREFLIGHT_TMP\"");
   lines.push('PREFLIGHT_RC=$?');
@@ -1621,11 +1659,10 @@ function generateShContent() {
   lines.push('# ── Archive packaging ───────────────────────────────────────────────────────');
   lines.push(`ARCHIVE_SERVER=${shellQuote(serverSafe)}`);
   lines.push("ARCHIVE_TS=$(date -u '+%Y%m%d_%H%M%S' 2>/dev/null || date '+%Y%m%d_%H%M%S')");
-  lines.push('OUTPARENT=$(cd "$OUTDIR/.." && pwd)');
   lines.push('ARCHIVE_BASE="StorageTools_Complete_${ARCHIVE_SERVER}_${ARCHIVE_TS}.tar"');
-  lines.push('ARCHIVE_FILE="$OUTPARENT/$ARCHIVE_BASE"');
-  lines.push('ARCHIVE_TMP="${ARCHIVE_FILE}.tmp"');
-  lines.push('MANIFEST="$OUTDIR/manifest.txt"');
+  lines.push('ARCHIVE_FILE="$OUTDIR/$ARCHIVE_BASE"');
+  lines.push('ARCHIVE_TMP="$OUTDIR/.${ARCHIVE_BASE}.tmp.$$"');
+  lines.push('MANIFEST="$WORKDIR/manifest.txt"');
   lines.push('');
   lines.push("printf 'format=StorageTools-Collection\\n' > \"$MANIFEST\"");
   lines.push("printf 'format_version=1\\n' >> \"$MANIFEST\"");
@@ -1637,27 +1674,33 @@ function generateShContent() {
   lines.push("printf 'warned=%s\\n' \"$WARN_COUNT\" >> \"$MANIFEST\"");
   lines.push("printf 'failed=%s\\n' \"$FAIL_COUNT\" >> \"$MANIFEST\"");
   lines.push('');
-  lines.push('echo "Creating collection archive: $ARCHIVE_BASE"');
-  lines.push('if (cd "$OUTDIR" && tar -cf "$ARCHIVE_TMP" .); then');
+  lines.push('echo "Resolved output folder: $OUTDIR"');
+  lines.push('echo "Creating collection archive in output folder: $ARCHIVE_FILE"');
+  lines.push('if tar -cf "$ARCHIVE_TMP" -C "$WORKDIR" .; then');
   lines.push('  if [ -s "$ARCHIVE_TMP" ]; then');
   lines.push('    mv "$ARCHIVE_TMP" "$ARCHIVE_FILE"');
   lines.push('    ARCHIVE_TMP=""');
   lines.push("    printf '%s\\n' \"$(date) archive created: $ARCHIVE_FILE\" >> \"$LOGFILE\"");
   lines.push('    echo "Archive created: $ARCHIVE_FILE"');
-  lines.push('    rm -rf "$OUTDIR"');
+  lines.push('    if safe_remove_workdir "$WORKDIR"; then');
+  lines.push('      echo "Temporary working files removed: $WORKDIR"');
+  lines.push('    else');
+  lines.push('      echo "[WARN] Working directory safety check failed; diagnostics retained in: $WORKDIR" >&2');
+  lines.push('    fi');
   lines.push('    echo "================================================================="');
   lines.push('    echo "Collection archive: $ARCHIVE_FILE"');
+  lines.push('    echo "Output folder retained: $OUTDIR"');
   lines.push('    echo "Import this single archive into StorageTools to generate your XLSX report."');
   lines.push('    echo "================================================================="');
   lines.push('  else');
   lines.push('    rm -f "$ARCHIVE_TMP"; ARCHIVE_TMP=""');
-  lines.push("    printf '%s\\n' \"$(date) [WARN] archive empty -- files retained in $OUTDIR\" >> \"$LOGFILE\"");
-  lines.push('    echo "[WARN] Archive created but is empty; individual files retained in: $OUTDIR" >&2');
+  lines.push("    printf '%s\\n' \"$(date) [WARN] archive empty -- diagnostic files retained in $WORKDIR\" >> \"$LOGFILE\"");
+  lines.push('    echo "[WARN] Archive created but is empty; diagnostic files retained in: $WORKDIR" >&2');
   lines.push('  fi');
   lines.push('else');
   lines.push('  rm -f "$ARCHIVE_TMP"; ARCHIVE_TMP=""');
-  lines.push("  printf '%s\\n' \"$(date) [WARN] archive creation failed -- files retained in $OUTDIR\" >> \"$LOGFILE\"");
-  lines.push('  echo "[WARN] Archive creation failed; individual files retained in: $OUTDIR" >&2');
+  lines.push("  printf '%s\\n' \"$(date) [WARN] archive creation failed -- diagnostic files retained in $WORKDIR\" >> \"$LOGFILE\"");
+  lines.push('  echo "[WARN] Archive creation failed; diagnostic files retained in: $WORKDIR" >&2');
   lines.push('fi');
 
   return lines.join('\n');

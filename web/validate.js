@@ -330,17 +330,31 @@ const shArchiveTokens = [
   'manifest.txt',
   'format=StorageTools-Collection',
   'query_count=',
+  'OUTDIR_RAW=',
+  'LAUNCH_DIR=$(pwd -P 2>/dev/null || pwd)',
+  'case "$OUTDIR_RAW" in',
+  '/*) OUTDIR="$OUTDIR_RAW" ;;',
+  '*) OUTDIR="$LAUNCH_DIR/$OUTDIR_RAW" ;;',
+  'WORKDIR="$OUTDIR/.work_',
   'ARCHIVE_TMP',
   'ARCHIVE_FILE',
   'ARCHIVE_SERVER',
-  'tar -cf',
+  'tar -cf "$ARCHIVE_TMP" -C "$WORKDIR" .',
   'mv "$ARCHIVE_TMP" "$ARCHIVE_FILE"',
-  'rm -rf "$OUTDIR"',
+  'safe_remove_workdir',
+  'rm -rf "$1"',
+  'ARCHIVE_FILE="$OUTDIR/$ARCHIVE_BASE"',
 ];
 for (const token of shArchiveTokens) {
   if (sh.includes(token)) ok(`SH includes: ${token}`);
   else fail(`SH missing: ${token}`);
 }
+if (!sh.includes('rm -rf "$OUTDIR"')) ok('SH does not delete configured output directory');
+else fail('SH must not delete configured output directory');
+if (!sh.includes('OUTPARENT=')) ok('SH no longer writes archive to output parent directory');
+else fail('SH still references output parent directory');
+if (!/(^|\n)OUTDIR(?:_RAW)?=['"]\/tmp/m.test(sh)) ok('SH has no /tmp output directory fallback');
+else fail('SH should not default output directory to /tmp');
 if (/StorageTools_Complete_/.test(sh)) ok('SH archive filename follows StorageTools_Complete_ prefix');
 else fail('SH archive filename missing StorageTools_Complete_ prefix');
 
@@ -349,21 +363,102 @@ const cmdArchiveTokens = [
   'where tar',
   'manifest.txt',
   'format=StorageTools-Collection',
+  'SET "OUTDIR_RAW=',
+  'SET "LAUNCH_DIR=%CD%"',
+  'IF NOT "%OUTDIR_RAW:~1,1%"==":" IF NOT "%OUTDIR_RAW:~0,2%"=="\\\\" SET "OUTDIR=%LAUNCH_DIR%\\%OUTDIR_RAW%"',
+  'SET "WORKDIR=%OUTDIR%\\.work_',
   'ARCHIVE_TMP',
   'ARCHIVE_FILE',
   'ARCHIVE_SERVER',
-  'tar -cf',
+  'tar -cf "%ARCHIVE_TMP%" -C "%WORKDIR%" .',
   'MOVE /Y',
-  'RD /S /Q',
+  'RD /S /Q "%WORKDIR%"',
+  'SET "ARCHIVE_FILE=%OUTDIR%\\%ARCHIVE_BASE%"',
 ];
 for (const token of cmdArchiveTokens) {
   if (cmd.includes(token)) ok(`CMD includes: ${token}`);
   else fail(`CMD missing: ${token}`);
 }
+if (!cmd.includes('RD /S /Q "%OUTDIR%"')) ok('CMD does not delete configured output directory');
+else fail('CMD must not delete configured output directory');
+if (!cmd.includes('SET "OUTPARENT=')) ok('CMD no longer writes archive to output parent directory');
+else fail('CMD still references output parent directory');
 if (/StorageTools_Complete_/.test(cmd)) ok('CMD archive filename follows StorageTools_Complete_ prefix');
 else fail('CMD archive filename missing StorageTools_Complete_ prefix');
 
-section('14. TAR parser unit tests');
+section('14. Output-directory resolution and safety');
+{
+  const elWin = __elements.get('outputDirWindows');
+  const elUnix = __elements.get('outputDirUnix');
+  const originalWin = elWin.value;
+  const originalUnix = elUnix.value;
+  try {
+    elWin.value = '';
+    elUnix.value = '';
+    const cmdDefault = generateCmdContent();
+    const shDefault = generateShContent();
+    if (cmdDefault.includes('SET "OUTDIR_RAW=StorageTools_Output"')) ok('CMD default output folder is StorageTools_Output');
+    else fail('CMD default output folder should be StorageTools_Output');
+    if (shDefault.includes("OUTDIR_RAW='StorageTools_Output'")) ok('SH default output folder is StorageTools_Output');
+    else fail('SH default output folder should be StorageTools_Output');
+
+    elWin.value = 'nested\\relative out';
+    elUnix.value = 'nested/relative out';
+    const cmdRelative = generateCmdContent();
+    const shRelative = generateShContent();
+    if (cmdRelative.includes('SET "OUTDIR_RAW=nested\\relative out"')) ok('CMD keeps spaced relative output path in quoted assignment');
+    else fail('CMD should preserve spaced relative output path');
+    if (shRelative.includes("OUTDIR_RAW='nested/relative out'")) ok('SH keeps spaced relative output path shell-quoted');
+    else fail('SH should preserve spaced relative output path');
+    if (cmdRelative.includes('SET "OUTDIR=%LAUNCH_DIR%\\%OUTDIR_RAW%"')) ok('CMD resolves relative output paths from launch directory');
+    else fail('CMD missing launch-directory relative output resolution');
+    if (shRelative.includes('*) OUTDIR="$LAUNCH_DIR/$OUTDIR_RAW" ;;')) ok('SH resolves relative output paths from launch directory');
+    else fail('SH missing launch-directory relative output resolution');
+
+    elWin.value = 'D:\\Absolute Folder\\Out';
+    const cmdDrive = generateCmdContent();
+    if (cmdDrive.includes('SET "OUTDIR_RAW=D:\\Absolute Folder\\Out"')) ok('CMD absolute drive output path remains absolute');
+    else fail('CMD absolute drive output path handling missing');
+
+    elWin.value = '\\\\server\\share\\out folder';
+    const cmdUnc = generateCmdContent();
+    if (cmdUnc.includes('SET "OUTDIR_RAW=\\\\server\\share\\out folder"')) ok('CMD UNC output path remains absolute');
+    else fail('CMD UNC output path handling missing');
+    if (cmdUnc.includes('IF NOT "%OUTDIR_RAW:~1,1%"==":" IF NOT "%OUTDIR_RAW:~0,2%"=="\\\\" SET "OUTDIR=%LAUNCH_DIR%\\%OUTDIR_RAW%"')) ok('CMD UNC path remains protected by absolute-path check');
+    else fail('CMD UNC absolute-path check missing');
+
+    elUnix.value = '/var/tmp/storage tools/out';
+    const shAbsolute = generateShContent();
+    if (shAbsolute.includes("OUTDIR_RAW='/var/tmp/storage tools/out'")) ok('SH absolute output path remains absolute');
+    else fail('SH absolute output path handling missing');
+  } finally {
+    elWin.value = originalWin;
+    elUnix.value = originalUnix;
+  }
+
+  if (cmd.includes('IF /I "%WORKDIR%"=="%OUTDIR%" (')) ok('CMD protects against deleting output directory during cleanup');
+  else fail('CMD missing output-directory cleanup safety guard');
+  if (cmd.includes('ELSE IF /I "%WORKDIR%"==".." (')) ok('CMD guards against parent-directory cleanup');
+  else fail('CMD missing parent-directory cleanup guard');
+  const shDangerGuards = [
+    '""|"/"',
+    '"."',
+    '".."',
+    '"$OUTDIR"',
+    '"$LAUNCH_DIR"',
+  ];
+  const missingShDangerGuards = shDangerGuards.filter(token => !sh.includes(token));
+  if (missingShDangerGuards.length === 0) ok('SH guards dangerous cleanup targets');
+  else fail(`SH missing dangerous cleanup guard tokens: ${missingShDangerGuards.join(', ')}`);
+  if (sh.includes('safe_remove_workdir "$WORKDIR"')) ok('SH cleanup removes only working directory');
+  else fail('SH should remove only current-run working directory');
+  if (sh.includes('"$OUTDIR"/.work_*) rm -rf "$1" ;;')) ok('SH cleanup allows only .work_ staging directories under output folder');
+  else fail('SH safe_remove_workdir should only delete .work_ staging directories');
+  if (cmd.includes('RD /S /Q "%WORKDIR%"')) ok('CMD cleanup removes only working directory');
+  else fail('CMD should remove only current-run working directory');
+}
+
+section('15. TAR parser unit tests');
 if (typeof parseTarArchive !== 'function') {
   fail('parseTarArchive is not exported');
 } else {
@@ -1403,10 +1498,10 @@ section('27. Windows CMD path correctness (backslash escaping)');
 {
   // All four critical Windows paths must be present with correct separator
   const goodPaths = [
-    '%OUTDIR%\\qerr.tmp',
-    '%OUTDIR%\\preflight.tmp',
-    '%OUTDIR%\\collection_log.txt',
-    '%OUTDIR%\\collection_errors.log',
+    '%WORKDIR%\\qerr.tmp',
+    '%WORKDIR%\\preflight.tmp',
+    '%WORKDIR%\\collection_log.txt',
+    '%WORKDIR%\\collection_errors.log',
   ];
   for (const p of goodPaths) {
     if (cmd.includes(p)) ok(`CMD contains correct path: ${p}`);
@@ -1415,10 +1510,10 @@ section('27. Windows CMD path correctness (backslash escaping)');
 
   // None of the malformed (backslash-dropped) forms must appear
   const badPaths = [
-    '%OUTDIR%qerr.tmp',
-    '%OUTDIR%preflight.tmp',
-    '%OUTDIR%collection_log.txt',
-    '%OUTDIR%collection_errors.log',
+    '%WORKDIR%qerr.tmp',
+    '%WORKDIR%preflight.tmp',
+    '%WORKDIR%collection_log.txt',
+    '%WORKDIR%collection_errors.log',
   ];
   for (const p of badPaths) {
     if (!cmd.includes(p)) ok(`CMD has no malformed path: ${p}`);
@@ -1436,7 +1531,7 @@ section('28. Windows CMD ANS1051 authentication detection (no stale ERRORLEVEL)'
   }
 
   // Must use && pattern so SET only runs when FINDSTR succeeds
-  if (cmd.includes('FINDSTR /I "ANS1051I" "%OUTDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"')) {
+  if (cmd.includes('FINDSTR /I "ANS1051I" "%WORKDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"')) {
     ok('CMD uses FINDSTR && SET pattern for ANS1051_FATAL');
   } else {
     fail('CMD missing FINDSTR && SET pattern for ANS1051_FATAL');
@@ -1450,7 +1545,7 @@ section('28. Windows CMD ANS1051 authentication detection (no stale ERRORLEVEL)'
   }
 
   // Preflight must also use && pattern
-  if (cmd.includes('FINDSTR /I "ANS1051I" "%OUTDIR%\\preflight.tmp" > NUL 2>&1 && SET PREFLIGHT_AUTH=0')) {
+  if (cmd.includes('FINDSTR /I "ANS1051I" "%WORKDIR%\\preflight.tmp" > NUL 2>&1 && SET PREFLIGHT_AUTH=0')) {
     ok('CMD uses FINDSTR && SET pattern for PREFLIGHT_AUTH');
   } else {
     fail('CMD missing FINDSTR && SET pattern for PREFLIGHT_AUTH');
@@ -1508,7 +1603,7 @@ section('30. Windows CMD: no non-ASCII dash punctuation in generated text');
 
 section('31. Windows CMD: consistent qerr.tmp path across redirect/size/TYPE/FINDSTR/DEL');
 {
-  const qerrPath = '"%OUTDIR%\\qerr.tmp"';
+  const qerrPath = '"%WORKDIR%\\qerr.tmp"';
   const count = cmd.split(qerrPath).length - 1;
   // Expect at least 6 uses: redirection (in buildCmdLine), size-check×2, TYPE×2, FINDSTR, DEL
   if (count >= 6) {
@@ -1534,7 +1629,7 @@ section('32. Windows CMD title-safe stderr/auth flow uses subroutine (no block i
     fail('CMD does not call :HandleQueryStderr');
   }
 
-  if (!cmd.includes('FOR %%S IN ("%OUTDIR%\\qerr.tmp") DO IF %%~zS GTR 0 (')) {
+  if (!cmd.includes('FOR %%S IN ("%WORKDIR%\\qerr.tmp") DO IF %%~zS GTR 0 (')) {
     ok('CMD removed parenthesized stderr block that could break on title parentheses');
   } else {
     fail('CMD still contains parenthesized stderr block with inline title risk');
@@ -1579,19 +1674,19 @@ section('33. Windows CMD metacharacter-heavy titles are safely represented');
     fail('CMD stderr output does not use quoted variable expansion');
   }
 
-  if (cmdSpecial.includes('IF "%QERR_HAS_STDERR%"=="1" TYPE "%OUTDIR%\\qerr.tmp" >> "%OUTDIR%\\collection_errors.log"')) {
+  if (cmdSpecial.includes('IF "%QERR_HAS_STDERR%"=="1" TYPE "%WORKDIR%\\qerr.tmp" >> "%WORKDIR%\\collection_errors.log"')) {
     ok('CMD still appends stderr output to collection_errors.log');
   } else {
     fail('CMD no longer appends stderr output to collection_errors.log');
   }
 
-  if (cmdSpecial.includes('FINDSTR /I "ANS1051I" "%OUTDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"')) {
+  if (cmdSpecial.includes('FINDSTR /I "ANS1051I" "%WORKDIR%\\qerr.tmp" > NUL 2>&1 && SET "ANS1051_FATAL=1"')) {
     ok('CMD still detects real ANS1051I authentication failures');
   } else {
     fail('CMD missing ANS1051I detection in stderr handling');
   }
 
-  if (cmdSpecial.includes('IF EXIST "%OUTDIR%\\qerr.tmp" DEL "%OUTDIR%\\qerr.tmp"')) {
+  if (cmdSpecial.includes('IF EXIST "%WORKDIR%\\qerr.tmp" DEL "%WORKDIR%\\qerr.tmp"')) {
     ok('CMD still cleans up qerr.tmp after stderr/auth checks');
   } else {
     fail('CMD missing qerr.tmp cleanup in stderr/auth flow');
