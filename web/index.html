@@ -1151,7 +1151,6 @@ function generateCmdContent() {
   const serverSafe     = (cfg.serverName   || 'SERVER'  ).replace(/[^A-Za-z0-9_-]/g, '_');
   const manifestCustomer = (cfg.customerName || '(not set)').replace(/[^A-Za-z0-9 ._,-]/g, '_');
   const manifestServer   = (cfg.serverName   || '(not set)').replace(/[^A-Za-z0-9 ._,-]/g, '_');
-  const outDirWindows    = cmdSafeSetValue(cfg.outputDirWindows || DEFAULT_OUTPUT_DIR);
 
   const lines = [];
 
@@ -1180,7 +1179,7 @@ function generateCmdContent() {
   lines.push(`SET "DSMADMC=${cfg.dsmadmcPath || DEFAULT_WINDOWS_DSMADMC}"`);
   lines.push(`SET "ADMID=${cfg.adminId || DEFAULT_ADMIN_ID}"`);
   lines.push(`SET "ADMPA=${cfg.adminPa || 'PASSWORD'}"`);
-  lines.push(`SET "OUTDIR_RAW=${outDirWindows}"`);
+  lines.push(`SET "OUTDIR_RAW=${cmdSafeSetValue(cfg.outputDirWindows || DEFAULT_OUTPUT_DIR)}"`);
   lines.push('SET "LAUNCH_DIR=%CD%"');
   lines.push('SET "OUTDIR=%OUTDIR_RAW%"');
   lines.push('IF NOT "%OUTDIR_RAW:~1,1%"==":" IF NOT "%OUTDIR_RAW:~0,2%"=="\\\\" SET "OUTDIR=%LAUNCH_DIR%\\%OUTDIR_RAW%"');

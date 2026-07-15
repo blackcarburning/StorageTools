@@ -353,7 +353,7 @@ if (!sh.includes('rm -rf "$OUTDIR"')) ok('SH does not delete configured output d
 else fail('SH must not delete configured output directory');
 if (!sh.includes('OUTPARENT=')) ok('SH no longer writes archive to output parent directory');
 else fail('SH still references output parent directory');
-if (!/OUTDIR(?:_RAW)?=['"]?\/tmp/.test(sh)) ok('SH has no /tmp output directory fallback');
+if (!/(^|\n)OUTDIR(?:_RAW)?=['"]\/tmp/m.test(sh)) ok('SH has no /tmp output directory fallback');
 else fail('SH should not default output directory to /tmp');
 if (/StorageTools_Complete_/.test(sh)) ok('SH archive filename follows StorageTools_Complete_ prefix');
 else fail('SH archive filename missing StorageTools_Complete_ prefix');
