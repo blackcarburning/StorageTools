@@ -2021,6 +2021,8 @@ section('40. Healthcheck separate-tab HTML states, escaping, and ordering');
   else fail('Healthcheck HTML AI section ordering incorrect');
   if (htmlOut.includes('AI-assisted evaluation:</strong> Included') && htmlOut.includes('gpt-4.1') && /2026-07-15T12:34:56(?:\.000)?Z \(UTC\)/.test(htmlOut) && /reviewed by a qualified administrator/i.test(htmlOut) && /truncated after preserving all red and amber/i.test(htmlOut)) ok('Healthcheck HTML included state shows model, timestamp, narrative metadata, and disclaimer');
   else fail('Healthcheck HTML included state missing model/timestamp/disclaimer metadata');
+  if (!htmlOut.includes('undefined in the Perl source')) ok('Healthcheck HTML sanitizes threshold source-reference text');
+  else fail('Healthcheck HTML still exposes threshold source-reference text');
   if (!/Perl parity|perlRef|HELIX get_the_variables/i.test(htmlOut)) ok('Healthcheck HTML excludes user-facing Perl parity/source text');
   else fail('Healthcheck HTML still exposes Perl parity/source text');
   if ((htmlOut.match(/AI-assisted healthcheck evaluation/g) || []).length === 1) ok('Healthcheck HTML renders only one AI section per report');

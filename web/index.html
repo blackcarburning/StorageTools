@@ -4362,6 +4362,8 @@ function renderHealthcheckDataStatus() {
   el.innerHTML = `${archiveText}<strong>Imported datasets:</strong> ${imported} · <strong>Healthcheck sources present:</strong> ${required.size - missing.length}/${required.size}<br>${sufficiency}`;
 }
 
+// These replacements are applied only to user-facing Healthcheck report strings so
+// the rendered HTML/DOCX/LLM payload does not expose Perl source-mapping language.
 const HEALTHCHECK_USER_TEXT_REPLACEMENTS = [
   [/\s*\(blank\/null addresses excluded,\s*as per Perl parity\)\.?/gi, ' (blank/null addresses excluded).'],
   [/The Perl source has no explicit branch for exactly 1 unavailable container, so the overall traffic light is left unchanged for parity\./g, 'Exactly one unavailable container requires manual review; the overall traffic light remains unchanged.'],
@@ -4411,6 +4413,8 @@ function sanitizeAiErrorMessage(message, apiKey) {
 
 function healthcheckTextFingerprint(text) {
   const value = String(text == null ? '' : text);
+  // FNV-1a 32-bit hash, used only to fingerprint potentially large AI narrative text
+  // for DOCX cache invalidation without embedding the full narrative in the signature.
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) {
     hash ^= value.charCodeAt(i);
@@ -5229,6 +5233,8 @@ function ensureHealthcheckDocxUrl(report) {
 
 function populateReportWindow(target, report) {
   const ai = getHealthcheckAiDisplayInfo(report || {});
+  // Revoke any previously generated DOCX while AI is still running so the UI cannot
+  // keep offering a stale export that omits the requested final AI state.
   if (ai.state === 'GENERATING') revokeHealthcheckUrls();
   const docxUrl = ai.state === 'GENERATING' ? '' : ensureHealthcheckDocxUrl(report);
   const html = buildHealthcheckReportHtml(report, docxUrl);
