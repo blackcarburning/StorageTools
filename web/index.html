@@ -387,7 +387,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
     </div>
     <div class="actions">
       <button class="btn btn-primary" id="btnRunHealthcheck" onclick="runHealthcheckAnalysis()">🚦 Run / Generate Traffic Light Report</button>
-      <button class="btn btn-success" id="btnDownloadHealthcheckDocx" onclick="downloadLatestHealthcheckDocx()" disabled>⬇ Download DOCX</button>
+      <button class="btn btn-success" id="btnDownloadHealthcheckDocx" onclick="downloadLatestHealthcheckDocx()" aria-label="Download the latest Healthcheck DOCX report" disabled>⬇ Download DOCX</button>
     </div>
     <div id="healthcheckRunStatus" class="alert alert-info" style="display:none"></div>
   </div>
@@ -404,17 +404,17 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
         <div class="form-grid">
           <div class="fg full">
             <label for="healthcheckOpenAiKey">OpenAI API key</label>
-            <input type="password" id="healthcheckOpenAiKey" placeholder="sk-..." autocomplete="off" spellcheck="false">
+            <input type="password" id="healthcheckOpenAiKey" placeholder="sk-..." autocomplete="off" spellcheck="false" oninput="renderHealthcheckAiPanelStatus()">
             <span class="hint">Memory only. Never written to localStorage, sessionStorage, the archive, generated reports, logs, or the URL.</span>
           </div>
           <div class="fg">
             <label for="healthcheckModelSelect">Model</label>
-            <select id="healthcheckModelSelect" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:5px;font-size:13px;font-family:inherit;width:100%"></select>
+            <select id="healthcheckModelSelect" onchange="renderHealthcheckAiPanelStatus()" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:5px;font-size:13px;font-family:inherit;width:100%"></select>
             <span class="hint" id="healthcheckModelSource">Fallback model list.</span>
           </div>
           <div class="fg">
             <label for="healthcheckCustomModel">Custom model ID (optional)</label>
-            <input type="text" id="healthcheckCustomModel" placeholder="Enter a custom/account-specific model ID" autocomplete="off" spellcheck="false">
+            <input type="text" id="healthcheckCustomModel" placeholder="Enter a custom/account-specific model ID" autocomplete="off" spellcheck="false" oninput="renderHealthcheckAiPanelStatus()">
             <span class="hint">If filled in, this overrides the selected model and is validated by the API response.</span>
           </div>
           <div class="fg">
@@ -1095,7 +1095,8 @@ const STATE = {
   healthcheck: {
     report: null,
     archiveToken: '',
-    docxUrl: ''
+    docxUrl: '',
+    docxSignature: ''
   },
   ai: {
     models: []
@@ -4305,6 +4306,10 @@ function evaluateHealthcheckReport(stateLike) {
     summaryBullets,
     notTested: results.filter(result => result.status === 'NOT_TESTED'),
     deterministicOnly: true,
+    aiState: 'NOT_INCLUDED',
+    aiModel: '',
+    aiRequestedAt: '',
+    aiGeneratedAt: '',
     aiAnalysis: null,
     aiError: '',
     aiPromptTruncated: false
@@ -4316,15 +4321,18 @@ function revokeHealthcheckUrls() {
     try { URL.revokeObjectURL(STATE.healthcheck.docxUrl); } catch (_) {}
     STATE.healthcheck.docxUrl = '';
   }
+  if (STATE.healthcheck) STATE.healthcheck.docxSignature = '';
 }
 
 function resetHealthcheckState() {
   revokeHealthcheckUrls();
   STATE.healthcheck.report = null;
   STATE.healthcheck.archiveToken = '';
+  STATE.healthcheck.docxSignature = '';
   renderHealthcheckDataStatus();
   renderHealthcheckSummary();
   renderHealthcheckPreview();
+  renderHealthcheckAiPanelStatus();
 }
 
 function getHealthcheckSectionOptions() {
@@ -4354,6 +4362,162 @@ function renderHealthcheckDataStatus() {
   el.innerHTML = `${archiveText}<strong>Imported datasets:</strong> ${imported} · <strong>Healthcheck sources present:</strong> ${required.size - missing.length}/${required.size}<br>${sufficiency}`;
 }
 
+// These replacements are applied only to user-facing Healthcheck report strings so
+// the rendered HTML/DOCX/LLM payload does not expose Perl source-mapping language.
+const HEALTHCHECK_USER_TEXT_REPLACEMENTS = [
+  [/\s*\(blank\/null addresses excluded,\s*as per Perl parity\)\.?/gi, ' (blank/null addresses excluded).'],
+  [/The Perl source has no explicit branch for exactly 1 unavailable container, so the overall traffic light is left unchanged for parity\./g, 'Exactly one unavailable container requires manual review; the overall traffic light remains unchanged.'],
+  [/SCHEDMODE value '([^']+)' was not recognised by the Perl rule/g, "SCHEDMODE value '$1' was not recognised by this healthcheck"],
+  [/could not be parsed for exact parity\./g, 'could not be parsed.'],
+  [/within the explicit Perl-supported set\./g, 'within the explicitly supported set.'],
+  [/above the explicit Perl branch set\./g, 'above the explicitly classified version set.'],
+  [/The Perl source explicitly classifies only major versions 7, 8, and 9 as supported\. Version /g, 'Versions 7, 8, and 9 are explicitly classified as supported in this healthcheck. Version '],
+  [/ is left informational for parity\./g, ' remains informational and should be reviewed.'],
+  [/\bPerl\b/gi, 'original'],
+  [/\bparity\b/gi, 'alignment']
+];
+
+function sanitizeHealthcheckUserText(text) {
+  let safe = String(text == null ? '' : text);
+  HEALTHCHECK_USER_TEXT_REPLACEMENTS.forEach(([pattern, replacement]) => {
+    safe = safe.replace(pattern, replacement);
+  });
+  return safe;
+}
+
+function escapeRegExp(value) {
+  return String(value == null ? '' : value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function formatHealthcheckTimestamp(value) {
+  if (!value) return '—';
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isNaN(date.getTime())) return `${date.toISOString()} (UTC)`;
+  return `${String(value)} (UTC)`;
+}
+
+function sanitizeAiErrorMessage(message, apiKey) {
+  let safe = String(message == null ? '' : message);
+  if (apiKey) {
+    const patterns = Array.from(new Set([apiKey, encodeURIComponent(apiKey)].filter(Boolean)));
+    patterns.forEach(pattern => {
+      safe = safe.replace(new RegExp(escapeRegExp(pattern), 'g'), '[redacted]');
+    });
+  }
+  safe = safe
+    .replace(/Authorization\s*:\s*Bearer\s+[^\s'"]+/gi, 'Authorization: ******')
+    .replace(/Bearer\s+sk-[A-Za-z0-9_-]+/gi, '******')
+    .replace(/sk-[A-Za-z0-9_-]{8,}/gi, '[redacted]');
+  return safe.trim();
+}
+
+function healthcheckTextFingerprint(text) {
+  const value = String(text == null ? '' : text);
+  // FNV-1a 32-bit hash. For this local DOCX cache key we only need a fast, lightweight
+  // fingerprint that changes when the narrative text changes; cryptographic strength is
+  // unnecessary because this value is not used for security decisions or persistence.
+  // The AI narratives here are short enough that a compact 32-bit fingerprint is a
+  // reasonable trade-off between speed, simplicity, and very low collision risk.
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${value.length}:${(hash >>> 0).toString(16)}`;
+}
+
+function getHealthcheckAiDisplayInfo(report) {
+  const aiAnalysis = report && report.aiAnalysis ? report.aiAnalysis : null;
+  const state = report && report.aiState
+    ? report.aiState
+    : aiAnalysis ? 'INCLUDED' : report && report.aiError ? 'FAILED' : 'NOT_INCLUDED';
+  return {
+    state,
+    label: state === 'INCLUDED' ? 'Included' : state === 'GENERATING' ? 'Generating' : state === 'FAILED' ? 'Failed' : 'Not included',
+    model: report && report.aiModel ? report.aiModel : aiAnalysis && aiAnalysis.model ? aiAnalysis.model : '',
+    requestedAt: report && report.aiRequestedAt ? report.aiRequestedAt : '',
+    generatedAt: report && report.aiGeneratedAt ? report.aiGeneratedAt : aiAnalysis && aiAnalysis.generatedAt ? aiAnalysis.generatedAt : '',
+    text: aiAnalysis && aiAnalysis.text ? aiAnalysis.text : '',
+    error: sanitizeAiErrorMessage(report && report.aiError ? report.aiError : ''),
+    promptTruncated: !!(report && report.aiPromptTruncated),
+    deterministicReady: !!(report && report.results && report.results.length)
+  };
+}
+
+function getHealthcheckReportSignature(report) {
+  const ai = getHealthcheckAiDisplayInfo(report || {});
+  return [
+    report && report.archiveToken ? report.archiveToken : '',
+    report && report.generatedAt ? report.generatedAt : '',
+    ai.state,
+    ai.model,
+    ai.requestedAt,
+    ai.generatedAt,
+    healthcheckTextFingerprint(ai.text),
+    ai.promptTruncated ? 'truncated' : 'full'
+  ].join('::');
+}
+
+function renderHealthcheckAiPanelStatus() {
+  const el = getHealthcheckAiStatusElement();
+  if (!el) return;
+  const checkbox = document.getElementById('healthcheckIncludeAi');
+  const key = ((document.getElementById('healthcheckOpenAiKey') || {}).value || '').trim();
+  const report = STATE.healthcheck.report;
+  const info = report ? getHealthcheckAiDisplayInfo(report) : null;
+  let kind = 'alert-info';
+  let lines = [];
+  if (info && info.state === 'GENERATING') {
+    kind = 'alert-info';
+    lines = [
+      '<strong>AI-assisted evaluation: Generating</strong>',
+      'Please wait while I generate the AI-assisted analysis.',
+      info.model ? `<strong>Selected model:</strong> ${escapeHtml(info.model)}` : '',
+      info.requestedAt ? `<strong>Request started:</strong> ${escapeHtml(formatHealthcheckTimestamp(info.requestedAt))}` : ''
+    ];
+  } else if (info && info.state === 'INCLUDED') {
+    kind = 'alert-success';
+    lines = [
+      '<strong>AI-assisted evaluation: Included</strong>',
+      info.model ? `<strong>Model:</strong> ${escapeHtml(info.model)}` : '',
+      info.generatedAt ? `<strong>Generated:</strong> ${escapeHtml(formatHealthcheckTimestamp(info.generatedAt))}` : '',
+      info.promptTruncated ? 'The structured input sent to the model was truncated after preserving all red and amber findings.' : ''
+    ];
+  } else if (info && info.state === 'FAILED') {
+    kind = 'alert-warn';
+    lines = [
+      '<strong>AI-assisted evaluation: Failed</strong>',
+      info.model ? `<strong>Selected model:</strong> ${escapeHtml(info.model)}` : '',
+      info.requestedAt ? `<strong>Attempted:</strong> ${escapeHtml(formatHealthcheckTimestamp(info.requestedAt))}` : '',
+      info.error ? `<strong>Error:</strong> ${escapeHtml(info.error)}` : '',
+      'The deterministic traffic-light report remains valid and complete.'
+    ];
+  } else if (checkbox && checkbox.checked && key) {
+    kind = 'alert-success';
+    lines = [
+      '<strong>AI-assisted evaluation: Ready / configured</strong>',
+      `<strong>Selected model:</strong> ${escapeHtml(getSelectedHealthcheckModelId())}`,
+      'The deterministic report will be generated locally first, then the optional OpenAI request will run.'
+    ];
+  } else if (checkbox && checkbox.checked) {
+    kind = 'alert-warn';
+    lines = [
+      '<strong>AI-assisted evaluation: API key required</strong>',
+      'Enter an OpenAI API key to enable the requested AI-assisted analysis.',
+      getSelectedHealthcheckModelId() ? `<strong>Selected model:</strong> ${escapeHtml(getSelectedHealthcheckModelId())}` : ''
+    ];
+  } else {
+    kind = 'alert-info';
+    lines = [
+      '<strong>AI-assisted evaluation: Not included</strong>',
+      'The deterministic traffic-light analysis runs locally and no OpenAI request will be made unless you enable AI analysis.'
+    ];
+  }
+  el.className = `alert ${kind}`;
+  el.innerHTML = lines.filter(Boolean).join('<br>');
+  el.style.display = 'block';
+}
+
 function renderHealthcheckSummary() {
   const statsEl = document.getElementById('healthcheckSummaryStats');
   const statusEl = document.getElementById('healthcheckRunStatus');
@@ -4367,25 +4531,44 @@ function renderHealthcheckSummary() {
       <div class="stat-box"><div class="stat-num">0</div><div class="stat-lbl">Green / OK</div></div>
       <div class="stat-box"><div class="stat-num">0</div><div class="stat-lbl">Informational / Check</div></div>
       <div class="stat-box"><div class="stat-num">0</div><div class="stat-lbl">Not tested / insufficient</div></div>`;
-    if (docxBtn) docxBtn.disabled = true;
+    if (docxBtn) {
+      docxBtn.disabled = true;
+      docxBtn.textContent = '⬇ Download DOCX';
+      docxBtn.title = 'Run the healthcheck report first.';
+      if (docxBtn.setAttribute) docxBtn.setAttribute('aria-label', 'Run the Healthcheck report before downloading the DOCX.');
+    }
     if (statusEl) statusEl.style.display = 'none';
+    renderHealthcheckAiPanelStatus();
     return;
   }
+  const ai = getHealthcheckAiDisplayInfo(report);
   statsEl.innerHTML = `
     <div class="stat-box"><div class="stat-num">${report.counts.RED}</div><div class="stat-lbl">Red / Failed</div></div>
     <div class="stat-box"><div class="stat-num">${report.counts.AMBER}</div><div class="stat-lbl">Amber / Warning</div></div>
     <div class="stat-box"><div class="stat-num">${report.counts.GREEN}</div><div class="stat-lbl">Green / OK</div></div>
     <div class="stat-box"><div class="stat-num">${report.counts.INFO}</div><div class="stat-lbl">Informational / Check</div></div>
     <div class="stat-box"><div class="stat-num">${report.counts.NOT_TESTED}</div><div class="stat-lbl">Not tested / insufficient</div></div>`;
-  if (docxBtn) docxBtn.disabled = false;
+  if (docxBtn) {
+    docxBtn.disabled = ai.state === 'GENERATING';
+    docxBtn.textContent = ai.state === 'GENERATING' ? '⬇ DOCX available after AI completes' : '⬇ Download DOCX';
+    docxBtn.title = ai.state === 'GENERATING'
+      ? 'Wait for the AI-assisted analysis to finish before exporting the final DOCX.'
+      : 'Download the latest Healthcheck DOCX report.';
+    if (docxBtn.setAttribute) docxBtn.setAttribute('aria-label', ai.state === 'GENERATING'
+      ? 'DOCX export is unavailable while AI-assisted analysis is generating.'
+      : 'Download the latest Healthcheck DOCX report.');
+  }
   if (statusEl) {
-    statusEl.className = report.aiError ? 'alert alert-warn' : 'alert alert-success';
+    statusEl.className = ai.state === 'FAILED' ? 'alert alert-warn' : ai.state === 'GENERATING' ? 'alert alert-info' : 'alert alert-success';
     statusEl.style.display = 'block';
     let text = `Deterministic healthcheck generated. Overall traffic light: ${report.overall}.`;
-    if (report.aiAnalysis) text += ` AI-assisted analysis appended using model ${report.aiAnalysis.model}.`;
-    if (report.aiError) text += ` AI analysis failed separately: ${report.aiError}`;
+    if (ai.state === 'NOT_INCLUDED') text += ' AI-assisted evaluation: Not included.';
+    if (ai.state === 'GENERATING') text += ` AI-assisted evaluation: Generating${ai.model ? ` with model ${ai.model}` : ''}. Please wait while the AI-assisted analysis is generated.`;
+    if (ai.state === 'INCLUDED') text += ` AI-assisted evaluation: Included${ai.model ? ` using model ${ai.model}` : ''}${ai.generatedAt ? ` at ${formatHealthcheckTimestamp(ai.generatedAt)}` : ''}.`;
+    if (ai.state === 'FAILED') text += ` AI-assisted evaluation: Failed${ai.model ? ` using model ${ai.model}` : ''}. ${ai.error}`;
     statusEl.textContent = text;
   }
+  renderHealthcheckAiPanelStatus();
 }
 
 function renderHealthcheckPreview() {
@@ -4419,10 +4602,9 @@ function renderHealthcheckPreview() {
       html += `<div class="health-preview-card">
         <h4><span>${escapeHtml(result.title)}</span><span>${healthBadge(result.status)}</span></h4>
         <div class="health-preview-meta">${valuesHtml}</div>
-        <div class="health-preview-text"><strong>Threshold / rationale:</strong> ${escapeHtml(result.threshold || '—')}<br>
-        <strong>Finding:</strong> ${escapeHtml(result.finding || '—')}<br>
-        <strong>Recommendation:</strong> ${escapeHtml(result.recommendation || '—')}<br>
-        <strong>Perl parity:</strong> ${escapeHtml(result.perlRef)} — ${escapeHtml(result.parityNote || 'Exact branch port.')}</div>
+        <div class="health-preview-text"><strong>Threshold / rationale:</strong> ${escapeHtml(sanitizeHealthcheckUserText(result.threshold || '—'))}<br>
+        <strong>Finding:</strong> ${escapeHtml(sanitizeHealthcheckUserText(result.finding || '—'))}<br>
+        <strong>Recommendation:</strong> ${escapeHtml(sanitizeHealthcheckUserText(result.recommendation || '—'))}</div>
         ${missingHtml}
       </div>`;
     });
@@ -4460,6 +4642,7 @@ function setHealthcheckModelOptions(modelIds, sourceLabel) {
   STATE.ai.models = unique.slice();
   select.innerHTML = unique.map(id => `<option value="${escapeAttr(id)}">${escapeHtml(id)}</option>`).join('') || '<option value="">No compatible models found</option>';
   document.getElementById('healthcheckModelSource').textContent = sourceLabel;
+  renderHealthcheckAiPanelStatus();
 }
 
 function filterCompatibleOpenAiModels(models) {
@@ -4478,7 +4661,6 @@ async function refreshOpenAiModels(silent) {
   const key = (document.getElementById('healthcheckOpenAiKey') || {}).value || '';
   if (!key.trim()) {
     setHealthcheckModelOptions(HEALTHCHECK_FALLBACK_MODELS, 'Fallback model list (enter a key and refresh for live account models).');
-    if (!silent) showHealthcheckAiStatus('Enter an OpenAI API key first, or use the fallback/custom model options.', 'alert-warn');
     return HEALTHCHECK_FALLBACK_MODELS.slice();
   }
   try {
@@ -4495,15 +4677,13 @@ async function refreshOpenAiModels(silent) {
     const filtered = filterCompatibleOpenAiModels(json && json.data ? json.data : []);
     if (filtered.length === 0) {
       setHealthcheckModelOptions(HEALTHCHECK_FALLBACK_MODELS, 'Fallback model list (no compatible text/reasoning models returned by /v1/models).');
-      if (!silent) showHealthcheckAiStatus('No compatible text/reasoning models were returned for this key. Use a fallback or custom model ID.', 'alert-warn');
       return HEALTHCHECK_FALLBACK_MODELS.slice();
     }
     setHealthcheckModelOptions(filtered, 'Live model list from OpenAI /v1/models.');
-    if (!silent) showHealthcheckAiStatus(`Loaded ${filtered.length} compatible model ID(s) from OpenAI.`, 'alert-success');
     return filtered;
   } catch (err) {
     setHealthcheckModelOptions(HEALTHCHECK_FALLBACK_MODELS, 'Fallback model list (live model refresh failed).');
-    if (!silent) showHealthcheckAiStatus(`Model refresh failed: ${err.message}`, 'alert-warn');
+    if (!silent) showHealthcheckAiStatus(`Model refresh failed: ${sanitizeAiErrorMessage(err.message, key)}`, 'alert-warn');
     return HEALTHCHECK_FALLBACK_MODELS.slice();
   }
 }
@@ -4511,6 +4691,7 @@ async function refreshOpenAiModels(silent) {
 function handleHealthcheckAiToggle() {
   const checkbox = document.getElementById('healthcheckIncludeAi');
   if (checkbox && checkbox.checked) refreshOpenAiModels(true);
+  renderHealthcheckAiPanelStatus();
 }
 
 function getSelectedHealthcheckModelId() {
@@ -4547,11 +4728,11 @@ function buildHealthcheckAiPayload(report, limitChars) {
       section: result.section,
       title: result.title,
       status: result.status,
-      finding: result.finding,
-      recommendation: result.recommendation,
+      finding: sanitizeHealthcheckUserText(result.finding),
+      recommendation: sanitizeHealthcheckUserText(result.recommendation),
       sourceValues: result.values,
-      threshold: result.threshold,
-      note: result.note || ''
+      threshold: sanitizeHealthcheckUserText(result.threshold),
+      note: sanitizeHealthcheckUserText(result.note || '')
     };
     const text = JSON.stringify(item);
     const mustInclude = result.status === 'RED' || result.status === 'AMBER';
@@ -4640,6 +4821,86 @@ async function requestOpenAiHealthcheckAnalysis(apiKey, modelId, report) {
   };
 }
 
+function buildHealthcheckAiSectionHtml(report) {
+  const ai = getHealthcheckAiDisplayInfo(report || {});
+  const metadata = [
+    `<strong>AI-assisted evaluation:</strong> ${escapeHtml(ai.label)}`
+  ];
+  if (ai.model) metadata.push(`<strong>Model:</strong> ${escapeHtml(ai.model)}`);
+  if (ai.state === 'INCLUDED' && ai.generatedAt) metadata.push(`<strong>Generated:</strong> ${escapeHtml(formatHealthcheckTimestamp(ai.generatedAt))}`);
+  if (ai.state === 'FAILED' && ai.requestedAt) metadata.push(`<strong>Attempted:</strong> ${escapeHtml(formatHealthcheckTimestamp(ai.requestedAt))}`);
+  if (ai.state === 'GENERATING' && ai.requestedAt) metadata.push(`<strong>Started:</strong> ${escapeHtml(formatHealthcheckTimestamp(ai.requestedAt))}`);
+  if (ai.promptTruncated) metadata.push('<strong>LLM input:</strong> Lower-priority deterministic findings were truncated after preserving all red and amber items.');
+  let body = '';
+  if (ai.state === 'NOT_INCLUDED') {
+    body = '<div class="alert alert-info">The deterministic traffic-light analysis was generated locally and no OpenAI request was made.</div>';
+  } else if (ai.state === 'GENERATING') {
+    body = '<div class="alert alert-info">Please wait while the AI-assisted analysis is generated.</div>';
+  } else if (ai.state === 'FAILED') {
+    body = `<div class="alert alert-warn"><strong>AI-assisted evaluation failed.</strong> ${escapeHtml(ai.error || 'The OpenAI request did not complete successfully.')}<br>The deterministic traffic-light report remains valid and complete.</div>`;
+  } else if (ai.state === 'INCLUDED') {
+    body = `<div class="alert alert-info">This AI-assisted narrative should be reviewed by a qualified administrator.</div><div class="health-preview-card"><div class="health-preview-text">${escapeHtml(ai.text || '—').replace(/\n/g, '<br>')}</div></div>`;
+  }
+  return `<section>
+    <h2>AI-assisted healthcheck evaluation</h2>
+    <div class="health-preview-card"><div class="health-preview-text">${metadata.join('<br>')}</div></div>
+    ${body}
+  </section>`;
+}
+
+function buildHealthcheckReportToolbarHtml(report, docxUrl) {
+  const ai = getHealthcheckAiDisplayInfo(report || {});
+  const pending = ai.state === 'GENERATING';
+  const downloadHtml = pending
+    ? '<span class="btn btn-gray" aria-disabled="true" aria-label="DOCX export is unavailable while AI-assisted analysis is generating." title="Wait for the AI-assisted evaluation to finish before exporting the final DOCX.">⬇ DOCX available after AI completes</span>'
+    : `<a class="btn btn-success" aria-label="Download the latest Healthcheck DOCX report" href="${escapeAttr(docxUrl || '#')}" download="${escapeAttr(defaultHealthcheckDocxFilename((report && report.metadata) || {}))}">⬇ Download DOCX</a>`;
+  return `<div class="health-report-toolbar">
+    <button class="btn btn-primary" onclick="window.print()">🖨 Print / Save as PDF</button>
+    ${downloadHtml}
+  </div>`;
+}
+
+function buildHealthcheckReportShellHtml(meta, includeAi, modelId) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>StorageTools Healthcheck Report</title>
+<style>
+body{margin:0;background:#eef2f7;color:#111827;font:14px/1.55 'Segoe UI',Tahoma,Arial,sans-serif}
+a{color:#1d4ed8}
+${getEmbeddedAppCss()}
+.health-report-shell{box-shadow:none}
+</style>
+</head>
+<body>
+<div class="health-report-shell">
+  <div class="health-report-toolbar">
+    <button class="btn btn-primary" onclick="window.print()">🖨 Print / Save as PDF</button>
+    <span class="btn btn-gray" aria-disabled="true" aria-label="DOCX export is unavailable until report generation completes.">⬇ DOCX available after report generation</span>
+  </div>
+  <div class="health-report-cover">
+    <h1 style="margin:0 0 8px;color:#1a3a5c">StorageTools — HELIX Healthcheck Analysis</h1>
+    <div class="health-preview-text"><strong>Customer:</strong> ${escapeHtml(meta.customer || '—')}<br>
+    <strong>Prepared by:</strong> ${escapeHtml(meta.preparedBy || '—')}<br>
+    <strong>Report date:</strong> ${escapeHtml(meta.reportDate || '—')}<br>
+    <strong>Server:</strong> ${escapeHtml(meta.server || '—')}</div>
+  </div>
+  <section>
+    <h2>AI-assisted healthcheck evaluation</h2>
+    <div class="health-preview-card"><div class="health-preview-text"><strong>AI-assisted evaluation:</strong> ${includeAi ? 'Generating' : 'Not included'}${modelId ? `<br><strong>Model:</strong> ${escapeHtml(modelId)}` : ''}</div></div>
+    <div class="alert alert-info">${includeAi ? 'Please wait while the AI-assisted analysis is generated.' : 'Preparing deterministic traffic-light analysis…'}</div>
+  </section>
+  <section>
+    <h2>Report status</h2>
+    <div class="alert alert-info">Preparing deterministic traffic-light analysis…</div>
+  </section>
+</div>
+</body>
+</html>`;
+}
+
 function buildHealthcheckReportHtml(report, docxUrl) {
   const meta = report.metadata || {};
   const archive = report.archive || {};
@@ -4656,20 +4917,15 @@ function buildHealthcheckReportHtml(report, docxUrl) {
         : '';
       return `<div class="health-preview-card">
         <h4><span>${escapeHtml(result.title)}</span><span>${healthBadge(result.status)}</span></h4>
-        <div class="health-preview-text"><strong>Finding:</strong> ${escapeHtml(result.finding || '—')}<br>
-        <strong>Recommendation:</strong> ${escapeHtml(result.recommendation || '—')}<br>
-        <strong>Threshold / rationale:</strong> ${escapeHtml(result.threshold || '—')}<br>
-        <strong>Perl parity:</strong> ${escapeHtml(result.perlRef)} — ${escapeHtml(result.parityNote || '')}</div>
+        <div class="health-preview-text"><strong>Finding:</strong> ${escapeHtml(sanitizeHealthcheckUserText(result.finding || '—'))}<br>
+        <strong>Recommendation:</strong> ${escapeHtml(sanitizeHealthcheckUserText(result.recommendation || '—'))}<br>
+        <strong>Threshold / rationale:</strong> ${escapeHtml(sanitizeHealthcheckUserText(result.threshold || '—'))}</div>
         <div class="health-preview-meta">${values}</div>
         ${missing}
       </div>`;
     }).join('');
     return `<section class="health-section"><h3>${escapeHtml(section.section)}</h3>${rows}</section>`;
   }).join('');
-  const aiHtml = report.aiAnalysis
-    ? `<section class="health-section"><h3>AI-assisted analysis</h3><div class="alert alert-info"><strong>Model:</strong> ${escapeHtml(report.aiAnalysis.model)} · <strong>Generated:</strong> ${escapeHtml(report.aiAnalysis.generatedAt)}<br>This AI narrative should be reviewed by a qualified administrator.${report.aiPromptTruncated ? ' Lower-priority deterministic findings were truncated after preserving all red and amber items.' : ''}</div><div class="health-preview-card"><div class="health-preview-text">${escapeHtml(report.aiAnalysis.text).replace(/\n/g, '<br>')}</div></div></section>`
-    : '';
-  const aiErrorHtml = report.aiError ? `<div class="alert alert-warn"><strong>AI analysis failed:</strong> ${escapeHtml(report.aiError)}</div>` : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4686,10 +4942,7 @@ ${getEmbeddedAppCss()}
 </head>
 <body>
 <div class="health-report-shell">
-  <div class="health-report-toolbar">
-    <button class="btn btn-primary" onclick="window.print()">🖨 Print / Save as PDF</button>
-    <a class="btn btn-success" href="${escapeAttr(docxUrl || '#')}" download="${escapeAttr(defaultHealthcheckDocxFilename(meta))}">⬇ Download DOCX</a>
-  </div>
+  ${buildHealthcheckReportToolbarHtml(report, docxUrl)}
   <div class="health-report-cover">
     <h1 style="margin:0 0 8px;color:#1a3a5c">StorageTools — HELIX Healthcheck Analysis</h1>
     <div class="health-preview-text"><strong>Customer:</strong> ${escapeHtml(meta.customer || '—')}<br>
@@ -4701,6 +4954,7 @@ ${getEmbeddedAppCss()}
       <span class="health-pill info">Deterministic reference timestamp: ${escapeHtml(report.referenceTimestamp)}</span>
     </div>
   </div>
+  ${buildHealthcheckAiSectionHtml(report)}
   <section>
     <h2>Executive summary</h2>
     <ul class="health-summary-list">${summaryItems.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
@@ -4716,6 +4970,11 @@ ${getEmbeddedAppCss()}
     </div>
   </section>
   <section>
+    <h2>Detailed findings by section</h2>
+    ${sectionsHtml}
+  </section>
+  ${report.notTested.length ? `<section class="health-section"><h3>Missing data / not tested</h3>${report.notTested.map(result => `<div class="health-preview-card"><h4><span>${escapeHtml(result.title)}</span><span>${healthBadge(result.status)}</span></h4><div class="health-preview-text"><strong>Reason:</strong> ${escapeHtml(sanitizeHealthcheckUserText(result.finding || result.note || '—'))}<br><strong>Required source:</strong> ${result.missingSources.map(src => `<code>${escapeHtml(src)}</code>`).join(', ') || '—'}</div></div>`).join('')}</section>` : ''}
+  <section>
     <h2>Collection metadata</h2>
     <div class="health-preview-card"><div class="health-preview-text"><strong>Archive:</strong> ${escapeHtml(archive.filename || '—')}<br>
     <strong>Collection timestamp:</strong> ${escapeHtml(manifest.generated_utc || '—')}<br>
@@ -4723,13 +4982,6 @@ ${getEmbeddedAppCss()}
     <strong>Manifest server label:</strong> ${escapeHtml(manifest.server_label || '—')}<br>
     <strong>Collection counters:</strong> passed=${escapeHtml(manifest.passed || '—')} warned=${escapeHtml(manifest.warned || '—')} failed=${escapeHtml(manifest.failed || '—')}</div></div>
   </section>
-  <section>
-    <h2>Detailed findings by section</h2>
-    ${sectionsHtml}
-  </section>
-  ${report.notTested.length ? `<section class="health-section"><h3>Missing data / not tested</h3>${report.notTested.map(result => `<div class="health-preview-card"><h4><span>${escapeHtml(result.title)}</span><span>${healthBadge(result.status)}</span></h4><div class="health-preview-text"><strong>Reason:</strong> ${escapeHtml(result.finding || result.note || '—')}<br><strong>Required source:</strong> ${result.missingSources.map(src => `<code>${escapeHtml(src)}</code>`).join(', ') || '—'}</div></div>`).join('')}</section>` : ''}
-  ${aiErrorHtml}
-  ${aiHtml}
 </div>
 </body>
 </html>`;
@@ -4855,6 +5107,7 @@ function buildHealthcheckDocxBytes(report) {
   const meta = report.metadata || {};
   const archive = report.archive || {};
   const manifest = archive.manifest || {};
+  const ai = getHealthcheckAiDisplayInfo(report || {});
   const body = [];
   body.push(docxParagraph('StorageTools — HELIX Healthcheck Analysis', 'Title'));
   body.push(docxParagraph(`Customer: ${valueOrDash(meta.customer)}`, null));
@@ -4862,6 +5115,23 @@ function buildHealthcheckDocxBytes(report) {
   body.push(docxParagraph(`Report date: ${valueOrDash(meta.reportDate)}`, null));
   body.push(docxParagraph(`Server: ${valueOrDash(meta.server)}`, null));
   body.push(docxParagraph(`Overall traffic light: ${report.overall}`, 'Heading1', healthStatusColorHex(report.overall === 'ORANGE' ? 'AMBER' : report.overall)));
+  body.push(docxParagraph('AI-assisted healthcheck evaluation', 'Heading1'));
+  body.push(docxParagraph(`AI-assisted evaluation: ${ai.label}`, null));
+  if (ai.model) body.push(docxParagraph(`Model: ${ai.model}`, null));
+  if (ai.state === 'INCLUDED' && ai.generatedAt) body.push(docxParagraph(`Generated: ${formatHealthcheckTimestamp(ai.generatedAt)}`, null));
+  if (ai.state === 'FAILED' && ai.requestedAt) body.push(docxParagraph(`Attempted: ${formatHealthcheckTimestamp(ai.requestedAt)}`, null));
+  if (ai.state === 'GENERATING' && ai.requestedAt) body.push(docxParagraph(`Started: ${formatHealthcheckTimestamp(ai.requestedAt)}`, null));
+  if (ai.promptTruncated) body.push(docxParagraph('LLM input: Lower-priority deterministic findings were truncated after preserving all red and amber items.', null, 'C27C0E'));
+  if (ai.state === 'NOT_INCLUDED') body.push(docxParagraph('The deterministic traffic-light analysis was generated locally and no OpenAI request was made.', null));
+  if (ai.state === 'GENERATING') body.push(docxParagraph('Please wait while the AI-assisted analysis is generated.', null, '1D4ED8'));
+  if (ai.state === 'FAILED') {
+    body.push(docxParagraph(`Error: ${ai.error || 'The OpenAI request did not complete successfully.'}`, null, 'C27C0E'));
+    body.push(docxParagraph('The deterministic traffic-light report remains valid and complete.', null));
+  }
+  if (ai.state === 'INCLUDED') {
+    body.push(docxParagraph('This AI-assisted narrative should be reviewed by a qualified administrator.', null, '1D4ED8'));
+    ai.text.split(/\r?\n/).forEach(line => body.push(docxParagraph(line || ' ', null)));
+  }
   body.push(docxParagraph('Executive summary', 'Heading1'));
   (report.summaryBullets.length ? report.summaryBullets : ['No red or amber management-summary items were produced from the deterministic rule set.']).forEach(item => body.push(docxParagraph(`• ${item}`, null)));
   body.push(docxParagraph('Traffic-light legend and counts', 'Heading1'));
@@ -4872,14 +5142,7 @@ function buildHealthcheckDocxBytes(report) {
     [docxCell('Informational / Check', 2600, 'DBEAFE'), docxCell(String(report.counts.INFO), 1200)],
     [docxCell('Not tested / insufficient', 2600, 'F3F4F6'), docxCell(String(report.counts.NOT_TESTED), 1200)]
   ]));
-  body.push(docxParagraph('Collection metadata', 'Heading1'));
-  body.push(docxTable([
-    [docxCell('Archive', 2200, '1A3A5C', 'FFFFFF'), docxCell(valueOrDash(archive.filename), 5200)],
-    [docxCell('Collection timestamp', 2200, '1A3A5C', 'FFFFFF'), docxCell(valueOrDash(manifest.generated_utc), 5200)],
-    [docxCell('Manifest customer', 2200, '1A3A5C', 'FFFFFF'), docxCell(valueOrDash(manifest.customer), 5200)],
-    [docxCell('Manifest server label', 2200, '1A3A5C', 'FFFFFF'), docxCell(valueOrDash(manifest.server_label), 5200)],
-    [docxCell('Collection counters', 2200, '1A3A5C', 'FFFFFF'), docxCell(`passed=${valueOrDash(manifest.passed)} warned=${valueOrDash(manifest.warned)} failed=${valueOrDash(manifest.failed)}`, 5200)]
-  ]));
+  body.push(docxParagraph('Detailed findings by section', 'Heading1'));
   report.sections.forEach(section => {
     body.push(docxParagraph(section.section, 'Heading1'));
     const tableRows = [[
@@ -4892,8 +5155,8 @@ function buildHealthcheckDocxBytes(report) {
       tableRows.push([
         docxCell(result.title, 2200),
         docxCell(healthStatusName(result.status), 1200, null, healthStatusColorHex(result.status === 'AMBER' ? 'AMBER' : result.status)),
-        docxCell(result.finding || '—', 2500),
-        docxCell(result.recommendation || '—', 2500)
+        docxCell(sanitizeHealthcheckUserText(result.finding || '—'), 2500),
+        docxCell(sanitizeHealthcheckUserText(result.recommendation || '—'), 2500)
       ]);
       if (result.values.length) {
         result.values.forEach(item => {
@@ -4901,7 +5164,7 @@ function buildHealthcheckDocxBytes(report) {
             docxCell(`  ${item.label}`, 2200, 'F8FAFC'),
             docxCell('', 1200, 'F8FAFC'),
             docxCell(valueOrDash(item.value), 2500, 'F8FAFC'),
-            docxCell(result.threshold || '—', 2500, 'F8FAFC')
+            docxCell(sanitizeHealthcheckUserText(result.threshold || '—'), 2500, 'F8FAFC')
           ]);
         });
       }
@@ -4910,23 +5173,28 @@ function buildHealthcheckDocxBytes(report) {
           docxCell('  Missing source(s)', 2200, 'FEF3C7'),
           docxCell('', 1200, 'FEF3C7'),
           docxCell(result.missingSources.join(', '), 2500, 'FEF3C7'),
-          docxCell(result.note || 'Insufficient data.', 2500, 'FEF3C7')
+          docxCell(sanitizeHealthcheckUserText(result.note || 'Insufficient data.'), 2500, 'FEF3C7')
         ]);
       }
     });
     body.push(docxTable(tableRows));
   });
-  if (report.aiError) {
-    body.push(docxParagraph('AI analysis failure', 'Heading1'));
-    body.push(docxParagraph(report.aiError, null, 'C27C0E'));
+  if (report.notTested.length) {
+    body.push(docxParagraph('Missing data / not tested', 'Heading1'));
+    report.notTested.forEach(result => {
+      body.push(docxParagraph(result.title, null));
+      body.push(docxParagraph(`Reason: ${sanitizeHealthcheckUserText(result.finding || result.note || '—')}`, null, 'C27C0E'));
+      body.push(docxParagraph(`Required source: ${result.missingSources.join(', ') || '—'}`, null));
+    });
   }
-  if (report.aiAnalysis) {
-    body.push(docxParagraph('AI-assisted analysis', 'Heading1'));
-    body.push(docxParagraph(`Model: ${report.aiAnalysis.model}`, null));
-    body.push(docxParagraph(`Generated: ${report.aiAnalysis.generatedAt}`, null));
-    body.push(docxParagraph('This AI narrative should be reviewed by a qualified administrator.', null, '1D4ED8'));
-    report.aiAnalysis.text.split(/\r?\n/).forEach(line => body.push(docxParagraph(line || ' ', null)));
-  }
+  body.push(docxParagraph('Collection metadata', 'Heading1'));
+  body.push(docxTable([
+    [docxCell('Archive', 2200, '1A3A5C', 'FFFFFF'), docxCell(valueOrDash(archive.filename), 5200)],
+    [docxCell('Collection timestamp', 2200, '1A3A5C', 'FFFFFF'), docxCell(valueOrDash(manifest.generated_utc), 5200)],
+    [docxCell('Manifest customer', 2200, '1A3A5C', 'FFFFFF'), docxCell(valueOrDash(manifest.customer), 5200)],
+    [docxCell('Manifest server label', 2200, '1A3A5C', 'FFFFFF'), docxCell(valueOrDash(manifest.server_label), 5200)],
+    [docxCell('Collection counters', 2200, '1A3A5C', 'FFFFFF'), docxCell(`passed=${valueOrDash(manifest.passed)} warned=${valueOrDash(manifest.warned)} failed=${valueOrDash(manifest.failed)}`, 5200)]
+  ]));
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" mc:Ignorable="w14 wp14"><w:body>${body.join('')}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
   const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -4955,36 +5223,44 @@ function defaultHealthcheckDocxFilename(meta) {
 }
 
 function ensureHealthcheckDocxUrl(report) {
-  if (STATE.healthcheck.docxUrl && STATE.healthcheck.archiveToken === report.archiveToken) return STATE.healthcheck.docxUrl;
+  const signature = getHealthcheckReportSignature(report);
+  if (STATE.healthcheck.docxUrl && STATE.healthcheck.docxSignature === signature) return STATE.healthcheck.docxUrl;
   revokeHealthcheckUrls();
   const bytes = buildHealthcheckDocxBytes(report);
   const blob = new Blob([bytes], { type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
   STATE.healthcheck.docxUrl = URL.createObjectURL(blob);
   STATE.healthcheck.archiveToken = report.archiveToken;
+  STATE.healthcheck.docxSignature = signature;
   return STATE.healthcheck.docxUrl;
 }
 
 function populateReportWindow(target, report) {
-  const docxUrl = ensureHealthcheckDocxUrl(report);
+  const ai = getHealthcheckAiDisplayInfo(report || {});
+  // Revoke any previously generated DOCX while AI is still running so the UI cannot
+  // keep offering a stale export that omits the requested final AI state.
+  if (ai.state === 'GENERATING') revokeHealthcheckUrls();
+  const docxUrl = ai.state === 'GENERATING' ? '' : ensureHealthcheckDocxUrl(report);
   const html = buildHealthcheckReportHtml(report, docxUrl);
   target.document.open();
   target.document.write(html);
   target.document.close();
 }
 
-function openHealthcheckReportWindow() {
+function openHealthcheckReportWindow(includeAi, modelId) {
   const opener = globalThis.open || (typeof window !== 'undefined' ? window.open.bind(window) : null);
   if (!opener) return null;
   const target = opener('', 'StorageToolsHealthcheckReport');
   if (!target) return null;
   target.document.open();
-  target.document.write('<!DOCTYPE html><html><head><title>Preparing healthcheck report…</title></head><body style="font-family:Segoe UI,Tahoma,Arial,sans-serif;padding:24px">Preparing deterministic healthcheck report…</body></html>');
+  target.document.write(buildHealthcheckReportShellHtml(readReportMetadata(), includeAi, modelId));
   target.document.close();
   return target;
 }
 
 async function runHealthcheckAnalysis() {
-  const popup = openHealthcheckReportWindow();
+  const includeAi = Boolean((document.getElementById('healthcheckIncludeAi') || {}).checked);
+  const selectedModelId = includeAi ? getSelectedHealthcheckModelId() : '';
+  const popup = openHealthcheckReportWindow(includeAi, selectedModelId);
   if (!popup) {
     const statusEl = document.getElementById('healthcheckRunStatus');
     statusEl.className = 'alert alert-danger';
@@ -4997,35 +5273,46 @@ async function runHealthcheckAnalysis() {
   STATE.healthcheck.report = report;
   renderHealthcheckSummary();
   renderHealthcheckPreview();
+  if (!includeAi) {
+    report.aiState = 'NOT_INCLUDED';
+    populateReportWindow(popup, report);
+    showStatus('Deterministic healthcheck report generated.');
+    renderHealthcheckSummary();
+    return;
+  }
+  report.aiState = 'GENERATING';
+  report.aiModel = selectedModelId;
+  report.aiRequestedAt = new Date().toISOString();
+  report.aiError = '';
+  report.aiAnalysis = null;
+  report.aiGeneratedAt = '';
+  report.aiPromptTruncated = false;
   populateReportWindow(popup, report);
   showStatus('Deterministic healthcheck report generated.');
-
-  const includeAi = !!((document.getElementById('healthcheckIncludeAi') || {}).checked);
-  if (!includeAi) return;
   const apiKey = ((document.getElementById('healthcheckOpenAiKey') || {}).value || '').trim();
   if (!apiKey) {
+    report.aiState = 'FAILED';
     report.aiError = 'Include OpenAI analysis was checked, but no API key was entered.';
     renderHealthcheckSummary();
     populateReportWindow(popup, report);
-    showHealthcheckAiStatus(report.aiError, 'alert-warn');
     return;
   }
-  const modelId = getSelectedHealthcheckModelId();
   try {
-    showHealthcheckAiStatus('Requesting live model list / AI narrative from OpenAI…', 'alert-info');
     await refreshOpenAiModels(true);
-    const aiAnalysis = await requestOpenAiHealthcheckAnalysis(apiKey, modelId, report);
+    const aiAnalysis = await requestOpenAiHealthcheckAnalysis(apiKey, selectedModelId, report);
     report.aiAnalysis = aiAnalysis;
+    report.aiState = 'INCLUDED';
+    report.aiModel = aiAnalysis.model;
+    report.aiGeneratedAt = aiAnalysis.generatedAt;
     report.aiPromptTruncated = !!aiAnalysis.promptTruncated;
     report.aiError = '';
     renderHealthcheckSummary();
     populateReportWindow(popup, report);
-    showHealthcheckAiStatus(`AI analysis appended successfully using model ${aiAnalysis.model}.`, 'alert-success');
   } catch (err) {
-    report.aiError = err.message;
+    report.aiState = 'FAILED';
+    report.aiError = sanitizeAiErrorMessage(err.message, apiKey);
     renderHealthcheckSummary();
     populateReportWindow(popup, report);
-    showHealthcheckAiStatus(`AI analysis failed: ${err.message}`, 'alert-warn');
   }
 }
 
@@ -5033,6 +5320,10 @@ function downloadLatestHealthcheckDocx() {
   const report = STATE.healthcheck.report;
   if (!report) {
     showStatus('Run the healthcheck report first.');
+    return;
+  }
+  if (getHealthcheckAiDisplayInfo(report).state === 'GENERATING') {
+    showStatus('Wait for the AI-assisted evaluation to finish before downloading the final DOCX.');
     return;
   }
   const url = ensureHealthcheckDocxUrl(report);
@@ -5049,6 +5340,7 @@ function initHealthcheckTab() {
   renderHealthcheckDataStatus();
   renderHealthcheckSummary();
   renderHealthcheckPreview();
+  renderHealthcheckAiPanelStatus();
 }
 
 
