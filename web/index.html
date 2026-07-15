@@ -186,7 +186,6 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
         <label>Windows Output Directory</label>
         <input type="text" id="outputDirWindows" value="StorageTools_Output">
         <span class="hint">Output folder for <code>.cmd</code> scripts. Relative paths resolve from the directory where the script is run; absolute paths can be drive-root (e.g. <code>C:\Data\Out</code>) or UNC (e.g. <code>\\server\share\Out</code>).</span>
-        <span class="hint">CSV output folder for <code>.cmd</code> scripts. The default <code>StorageTools_Output</code> is a relative path that works without any path-separator concerns. Use backslashes for absolute paths (e.g. <code>C:\TSM\Output</code>).</span>
       </div>
       <div class="fg">
         <label>Unix/Linux Output Directory</label>
@@ -1313,7 +1312,7 @@ function generateCmdContent() {
   lines.push(')');
   lines.push('SET "ARCHIVE_BASE=StorageTools_Complete_%ARCHIVE_SERVER%_%ARCHIVE_TS%.tar"');
   lines.push('SET "ARCHIVE_FILE=%OUTDIR%\\%ARCHIVE_BASE%"');
-  lines.push('SET "ARCHIVE_TMP=%OUTDIR%\\.%ARCHIVE_BASE%.tmp"');
+  lines.push('SET "ARCHIVE_TMP=%OUTDIR%\\%ARCHIVE_BASE%.tmp"');
   lines.push('');
   lines.push('REM Write manifest');
   lines.push('(');

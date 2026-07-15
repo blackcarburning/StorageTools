@@ -452,6 +452,8 @@ section('14. Output-directory resolution and safety');
   else fail(`SH missing dangerous cleanup guard tokens: ${missingShDangerGuards.join(', ')}`);
   if (sh.includes('safe_remove_workdir "$WORKDIR"')) ok('SH cleanup removes only working directory');
   else fail('SH should remove only current-run working directory');
+  if (sh.includes('"$OUTDIR"/.work_*) rm -rf "$1" ;;')) ok('SH cleanup allows only .work_ staging directories under output folder');
+  else fail('SH safe_remove_workdir should only delete .work_ staging directories');
   if (cmd.includes('RD /S /Q "%WORKDIR%"')) ok('CMD cleanup removes only working directory');
   else fail('CMD should remove only current-run working directory');
 }
