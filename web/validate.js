@@ -47,7 +47,11 @@ let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatS
     XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
     sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
     parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue,
-    deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES;
+    deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES,
+    HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes,
+    filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload,
+    requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename,
+    refreshOpenAiModels, runHealthcheckAnalysis;
 try {
   const elements = new Map();
   const makeEl = (value = '') => ({
@@ -57,6 +61,8 @@ try {
     className: '',
     href: '',
     download: '',
+    checked: false,
+    disabled: false,
     style: {},
     classList: { add() {}, remove() {} },
     addEventListener() {},
@@ -82,15 +88,35 @@ try {
     importSummary: '',
     reportStats: '',
     reportStatus: '',
+    reportCustomerName: '',
+    reportPreparedBy: '',
+    reportDate: '',
+    reportServerName: '',
     statusBar: '',
     configStatus: '',
     btnGenReport: '',
     dropZone: '',
     fileInput: '',
+    healthcheckStatusFilter: 'ALL',
+    healthcheckSectionFilter: 'ALL',
+    healthcheckPreview: '',
+    healthcheckSummaryStats: '',
+    healthcheckDataStatus: '',
+    healthcheckRunStatus: '',
+    btnDownloadHealthcheckDocx: '',
+    healthcheckModelSelect: '',
+    healthcheckModelSource: '',
+    healthcheckAiStatus: '',
+    healthcheckOpenAiKey: '',
+    healthcheckCustomModel: '',
+    healthcheckIncludeAi: '',
   };
   Object.entries(defaults).forEach(([k, v]) => elements.set(k, makeEl(v)));
   const mockDoc = {
-    querySelectorAll: () => ({ forEach() {} }),
+    querySelectorAll(sel) {
+      if (sel === 'style') return { forEach(cb) { cb({ textContent: '' }); } };
+      return { forEach() {} };
+    },
     getElementById(id) {
       if (!elements.has(id)) elements.set(id, makeEl(''));
       return elements.get(id);
@@ -100,7 +126,7 @@ try {
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
     'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES };`
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES, HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes, filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload, requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename, refreshOpenAiModels, runHealthcheckAnalysis };`
   );
   const result = sandbox(
     mockDoc,
@@ -119,7 +145,11 @@ try {
      buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename,
      sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport,
      parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue,
-     deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES } = result);
+     deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES,
+     HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes,
+     filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload,
+     requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename,
+     refreshOpenAiModels, runHealthcheckAnalysis } = result);
 } catch (err) {
   fail(`Could not evaluate index.html script: ${err.message}`);
   process.exit(1);
@@ -1560,6 +1590,385 @@ section('33. Windows CMD metacharacter-heavy titles are safely represented');
   } else {
     fail('CMD missing qerr.tmp cleanup in stderr/auth flow');
   }
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function importedFromObjects(map) {
+  const out = {};
+  Object.entries(map).forEach(([name, rows]) => {
+    const objects = rows || [];
+    const headers = objects.length ? Object.keys(objects[0]) : [];
+    out[name] = { name, headers, rows: objects.map(obj => headers.map(h => String(obj[h] == null ? '' : obj[h]))) };
+  });
+  return out;
+}
+
+function makeHealthState(imported) {
+  return {
+    imported,
+    archive: {
+      filename: 'StorageTools_Complete_SRV_20260715_120000.tar',
+      manifest: {
+        generated_utc: '2026-07-15T12:00:00Z',
+        customer: 'ACME',
+        server_label: 'SRV1',
+        passed: '76',
+        warned: '0',
+        failed: '0',
+      },
+      collectionLog: 'ok',
+      collectionErrors: '',
+      warnings: [],
+    },
+  };
+}
+
+function findHealthRule(report, id) {
+  const rule = report.results.find(item => item.id === id);
+  if (!rule) throw new Error(`Missing healthcheck rule ${id}`);
+  return rule;
+}
+
+function parseStoredZipEntries(bytes) {
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const entries = new Map();
+  let offset = 0;
+  while (offset + 30 <= buf.length && buf.readUInt32LE(offset) === 0x04034b50) {
+    const compression = buf.readUInt16LE(offset + 8);
+    if (compression !== 0) throw new Error('Expected uncompressed ZIP entry');
+    const size = buf.readUInt32LE(offset + 22);
+    const nameLen = buf.readUInt16LE(offset + 26);
+    const extraLen = buf.readUInt16LE(offset + 28);
+    const name = buf.slice(offset + 30, offset + 30 + nameLen).toString('utf8');
+    const start = offset + 30 + nameLen + extraLen;
+    const end = start + size;
+    entries.set(name, buf.slice(start, end).toString('utf8'));
+    offset = end;
+  }
+  return entries;
+}
+
+const HEALTH_FIXTURE_GOOD = importedFromObjects({
+  'doc_01_status.csv': [{
+    VERSION: '8', RELEASE: '1', LEVEL: '27', SUBLEVEL: '0',
+    ACTLOGRETENTION: '30', LICENSECOMPLIANCE: 'Valid',
+    MAXSESSIONS: '300', MAXSCHEDSESSIONS: '240',
+    ACCOUNTING: 'ON', QUERYSCHEDPERIOD: '1',
+  }],
+  'doc_04_log.csv': [{ PCT_USED: '25', MIRROR_LOG_DIR: '/mirror/log', AFAILOVER_LOG_DIR: '/fail/log' }],
+  'doc_05_options.csv': [
+    { OPTION_NAME: 'movebatchsize', OPTION_VALUE: '1000' },
+    { OPTION_NAME: 'movesizethresh', OPTION_VALUE: '32768' },
+    { OPTION_NAME: 'txngroupmax', OPTION_VALUE: '65000' },
+    { OPTION_NAME: 'idletimeout', OPTION_VALUE: '60' },
+    { OPTION_NAME: 'commtimeout', OPTION_VALUE: '3600' },
+    { OPTION_NAME: 'expinterval', OPTION_VALUE: '0' },
+  ],
+  'doc_06_admins.csv': [{ ADMIN_NAME: 'ADMIN', LOCKED: 'YES' }],
+  'doc_10_filespaces.csv': [{ NODE_NAME: 'NODE1', FILESPACE_NAME: '/fs1', BACKUP_END: '2026-07-10T00:00:00Z' }],
+  'doc_17_admin_schedules.csv': [
+    { SCHEDULE_NAME: 'DB_SCHED', COMMAND: 'RUN SCRIPT_DB', ACTIVE: 'YES' },
+    { SCHEDULE_NAME: 'STG_SCHED', COMMAND: 'RUN SCRIPT_STG', ACTIVE: 'YES' },
+  ],
+  'doc_19_stgpools.csv': [
+    { STGPOOL_NAME: 'DISKPOOL1', POOLTYPE: 'PRIMARY', DEVCLASS: 'DISK', NEXTSTGPOOL: 'COPYPOOL', REUSEDELAY: '3' },
+    { STGPOOL_NAME: 'TAPEPOOL1', POOLTYPE: 'PRIMARY', DEVCLASS: 'LTO', NEXTSTGPOOL: 'COPYPOOL', REUSEDELAY: '3' },
+  ],
+  'doc_22_libraries.csv': [{ LIBRARY_NAME: 'LIB1', LIBRARY_TYPE: 'SCSI' }],
+  'doc_23_drives.csv': [{ LIBRARY_NAME: 'LIB1', DRIVE_NAME: 'DRV1', ONLINE: 'YES' }],
+  'doc_24_paths.csv': [{ SOURCE_NAME: 'SRV1', ONLINE: 'YES' }],
+  'doc_26_disk_volumes.csv': [{ VOLUME_NAME: 'VOL1', STATUS: 'ONLINE' }],
+  'doc_34_drm_status.csv': [{ DBBEXPIREDAYS: '3', CHECKLABEL: 'No' }],
+  'hc_01_db_space.csv': [{ DB_PCT_USED: '70' }],
+  'hc_02_db_backups.csv': [
+    { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-15T06:00:00Z' },
+    { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-14T06:00:00Z' },
+    { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-13T06:00:00Z' },
+  ],
+  'hc_25_container_state.csv': [{ STGPOOL_NAME: 'DIRPOOL1', STATE: 'AVAILABLE', CONTAINER_COUNT: '10' }],
+  'doc_39_scripts.csv': [
+    { NAME: 'script_db', COMMAND: 'backup db type=full' },
+    { NAME: 'script_stg', COMMAND: 'backup stgpool TAPEPOOL1' },
+  ],
+});
+
+section('34. Healthcheck inventory and parity coverage');
+{
+  if (Array.isArray(HEALTHCHECK_RULES) && HEALTHCHECK_RULES.length === 38) ok('Healthcheck rule inventory exposes all 38 Perl-mapped rules/items');
+  else fail(`Unexpected healthcheck rule count: ${HEALTHCHECK_RULES && HEALTHCHECK_RULES.length}`);
+  const ids = new Set();
+  let duplicate = false;
+  const expectedRules = [
+    'readonly_containers', 'unavailable_containers', 'movebatchsize', 'movesizethresh', 'txngroupmax',
+    'fileprocess', 'license_compliance', 'admin_user_locked', 'idletimeout', 'commtimeout',
+    'query_schedule_period', 'schedmode', 'maxsessions', 'maxschedsessions', 'actlog_retention',
+    'summary_retention', 'event_retention', 'expire_interval', 'client_accounting',
+    'disk_volumes_online', 'drives_online', 'paths_online', 'drm_checklabel', 'nodes_defined_info',
+    'filespaces_not_backed_up', 'db_backup_count', 'db_backup_last_24h', 'disk_pools_no_next',
+    'reuse_delays', 'scratch_tape_warnings', 'database_utilisation', 'stgpool_backup_scripts',
+    'db_backup_scripts', 'log_utilisation', 'log_mirror', 'archlog_failover', 'code_level', 'tape_mounts_info',
+  ];
+  expectedRules.forEach(id => {
+    if (HEALTHCHECK_RULES.some(rule => rule.id === id)) ok(`Healthcheck parity includes ${id}`);
+    else fail(`Missing healthcheck parity rule ${id}`);
+  });
+  HEALTHCHECK_RULES.forEach(rule => {
+    if (ids.has(rule.id)) duplicate = true;
+    ids.add(rule.id);
+    if (rule.perlRef) ok(`Rule ${rule.id} cites Perl source`);
+    else fail(`Rule ${rule.id} missing Perl source citation`);
+  });
+  if (!duplicate) ok('Healthcheck rule IDs are unique');
+  else fail('Duplicate healthcheck rule IDs found');
+}
+
+section('35. Healthcheck deterministic evaluator boundaries');
+{
+  const base = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  const baseReport = evaluateHealthcheckReport(base);
+  if (findHealthRule(baseReport, 'database_utilisation').status === 'GREEN') ok('Healthcheck: baseline DB utilisation under 80 is green');
+  else fail('Healthcheck: baseline DB utilisation expected green');
+
+  const pct80 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  pct80.imported['hc_01_db_space.csv'].rows[0][0] = '80';
+  const pct80Report = evaluateHealthcheckReport(pct80);
+  if (findHealthRule(pct80Report, 'database_utilisation').status === 'RED') ok('Healthcheck: DB utilisation at 80 is red');
+  else fail('Healthcheck: DB utilisation at 80 should be red');
+
+  const max99 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  max99.imported['doc_01_status.csv'].rows[0][2] = max99.imported['doc_01_status.csv'].rows[0][2];
+  max99.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{
+      VERSION: '8', RELEASE: '1', LEVEL: '27', SUBLEVEL: '0',
+      ACTLOGRETENTION: '30', LICENSECOMPLIANCE: 'Valid',
+      MAXSESSIONS: '99', MAXSCHEDSESSIONS: '79',
+      ACCOUNTING: 'ON', QUERYSCHEDPERIOD: '1',
+    }],
+  })['doc_01_status.csv'];
+  const max99Report = evaluateHealthcheckReport(max99);
+  if (findHealthRule(max99Report, 'maxsessions').status === 'RED') ok('Healthcheck: MAXSESSIONS below 100 is red');
+  else fail('Healthcheck: MAXSESSIONS below 100 should be red');
+  if (findHealthRule(max99Report, 'maxschedsessions').status === 'RED') ok('Healthcheck: MAXSCHEDSESSIONS below 80 percent is red');
+  else fail('Healthcheck: MAXSCHEDSESSIONS below 80 percent should be red');
+
+  const max100 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  max100.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{
+      VERSION: '8', RELEASE: '1', LEVEL: '27', SUBLEVEL: '0',
+      ACTLOGRETENTION: '30', LICENSECOMPLIANCE: 'Valid',
+      MAXSESSIONS: '100', MAXSCHEDSESSIONS: '80',
+      ACCOUNTING: 'ON', QUERYSCHEDPERIOD: '1',
+    }],
+  })['doc_01_status.csv'];
+  const max100Report = evaluateHealthcheckReport(max100);
+  if (findHealthRule(max100Report, 'maxsessions').status === 'AMBER') ok('Healthcheck: MAXSESSIONS at 100 is amber');
+  else fail('Healthcheck: MAXSESSIONS at 100 should be amber');
+  if (findHealthRule(max100Report, 'maxschedsessions').status === 'GREEN') ok('Healthcheck: MAXSCHEDSESSIONS at 80 percent is green');
+  else fail('Healthcheck: MAXSCHEDSESSIONS at 80 percent should be green');
+
+  const max2000 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  max2000.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{
+      VERSION: '8', RELEASE: '1', LEVEL: '27', SUBLEVEL: '0',
+      ACTLOGRETENTION: '30', LICENSECOMPLIANCE: 'Valid',
+      MAXSESSIONS: '2000', MAXSCHEDSESSIONS: '1600',
+      ACCOUNTING: 'ON', QUERYSCHEDPERIOD: '1',
+    }],
+  })['doc_01_status.csv'];
+  const max2000Report = evaluateHealthcheckReport(max2000);
+  if (findHealthRule(max2000Report, 'maxsessions').status === 'INFO') ok('Healthcheck: MAXSESSIONS at 2000 is informational CHECK');
+  else fail('Healthcheck: MAXSESSIONS at 2000 should be informational');
+
+  const blankSched = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  blankSched.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{
+      VERSION: '8', RELEASE: '1', LEVEL: '27', SUBLEVEL: '0',
+      ACTLOGRETENTION: '29', LICENSECOMPLIANCE: 'Valid',
+      MAXSESSIONS: '300', MAXSCHEDSESSIONS: '240',
+      ACCOUNTING: 'OFF', QUERYSCHEDPERIOD: '',
+    }],
+  })['doc_01_status.csv'];
+  const blankSchedReport = evaluateHealthcheckReport(blankSched);
+  if (findHealthRule(blankSchedReport, 'query_schedule_period').status === 'AMBER') ok('Healthcheck: blank QUERYSCHEDPERIOD is amber');
+  else fail('Healthcheck: blank QUERYSCHEDPERIOD should be amber');
+  if (findHealthRule(blankSchedReport, 'actlog_retention').status === 'RED') ok('Healthcheck: ACTLOGRETENTION below 30 is red');
+  else fail('Healthcheck: ACTLOGRETENTION below 30 should be red');
+  if (findHealthRule(blankSchedReport, 'client_accounting').status === 'RED') ok('Healthcheck: ACCOUNTING OFF is red');
+  else fail('Healthcheck: ACCOUNTING OFF should be red');
+
+  const readonly = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  readonly.imported['hc_25_container_state.csv'] = importedFromObjects({
+    'hc_25_container_state.csv': [{ STGPOOL_NAME: 'DIRPOOL1', STATE: 'READONLY', CONTAINER_COUNT: '2' }],
+  })['hc_25_container_state.csv'];
+  const readonlyReport = evaluateHealthcheckReport(readonly);
+  if (findHealthRule(readonlyReport, 'readonly_containers').status === 'AMBER') ok('Healthcheck: READONLY containers trigger amber');
+  else fail('Healthcheck: READONLY containers should be amber');
+
+  const unavailableOne = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  unavailableOne.imported['hc_25_container_state.csv'] = importedFromObjects({
+    'hc_25_container_state.csv': [{ STGPOOL_NAME: 'DIRPOOL1', STATE: 'UNAVAILABLE', CONTAINER_COUNT: '1' }],
+  })['hc_25_container_state.csv'];
+  const unavailableOneReport = evaluateHealthcheckReport(unavailableOne);
+  if (findHealthRule(unavailableOneReport, 'unavailable_containers').status === 'INFO') ok('Healthcheck: exactly one UNAVAILABLE container preserves Perl gap as informational');
+  else fail('Healthcheck: exactly one UNAVAILABLE container should remain informational');
+
+  const noDb24h = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  noDb24h.imported['hc_02_db_backups.csv'] = importedFromObjects({
+    'hc_02_db_backups.csv': [
+      { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-10T06:00:00Z' },
+      { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-09T06:00:00Z' },
+      { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-08T06:00:00Z' },
+    ],
+  })['hc_02_db_backups.csv'];
+  const noDb24hReport = evaluateHealthcheckReport(noDb24h);
+  if (findHealthRule(noDb24hReport, 'db_backup_last_24h').status === 'RED') ok('Healthcheck: no DB backup in 24 hours is red');
+  else fail('Healthcheck: no DB backup in 24 hours should be red');
+
+  const highDbCount = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  highDbCount.imported['hc_02_db_backups.csv'] = importedFromObjects({
+    'hc_02_db_backups.csv': [
+      { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-15T06:00:00Z' },
+      { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-14T06:00:00Z' },
+      { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-13T06:00:00Z' },
+      { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-12T06:00:00Z' },
+    ],
+  })['hc_02_db_backups.csv'];
+  const highDbCountReport = evaluateHealthcheckReport(highDbCount);
+  if (findHealthRule(highDbCountReport, 'db_backup_count').status === 'AMBER') ok('Healthcheck: DB backup count above DBBEXPIREDAYS=3 is amber');
+  else fail('Healthcheck: DB backup count above DBBEXPIREDAYS=3 should be amber');
+
+  const reuseHigh = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  reuseHigh.imported['doc_19_stgpools.csv'] = importedFromObjects({
+    'doc_19_stgpools.csv': [
+      { STGPOOL_NAME: 'TAPEPOOL1', POOLTYPE: 'PRIMARY', DEVCLASS: 'LTO', NEXTSTGPOOL: 'COPYPOOL', REUSEDELAY: '4' },
+    ],
+  })['doc_19_stgpools.csv'];
+  const reuseHighReport = evaluateHealthcheckReport(reuseHigh);
+  if (findHealthRule(reuseHighReport, 'reuse_delays').status === 'AMBER') ok('Healthcheck: REUSEDELAY above DBBEXPIREDAYS is amber');
+  else fail('Healthcheck: REUSEDELAY above DBBEXPIREDAYS should be amber');
+
+  const reuseLow = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  reuseLow.imported['doc_19_stgpools.csv'] = importedFromObjects({
+    'doc_19_stgpools.csv': [
+      { STGPOOL_NAME: 'TAPEPOOL1', POOLTYPE: 'PRIMARY', DEVCLASS: 'LTO', NEXTSTGPOOL: 'COPYPOOL', REUSEDELAY: '2' },
+    ],
+  })['doc_19_stgpools.csv'];
+  const reuseLowReport = evaluateHealthcheckReport(reuseLow);
+  if (findHealthRule(reuseLowReport, 'reuse_delays').status === 'RED') ok('Healthcheck: REUSEDELAY below DBBEXPIREDAYS is red');
+  else fail('Healthcheck: REUSEDELAY below DBBEXPIREDAYS should be red');
+}
+
+section('36. Healthcheck missing-data and atomic replacement');
+{
+  const noArchiveReport = evaluateHealthcheckReport(makeHealthState({}));
+  if (noArchiveReport.overall === 'NOT_TESTED') ok('Healthcheck: completely missing data yields NOT_TESTED overall');
+  else fail(`Healthcheck: expected NOT_TESTED overall, got ${noArchiveReport.overall}`);
+
+  const stateA = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  stateA.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{
+      VERSION: '8', RELEASE: '1', LEVEL: '27', SUBLEVEL: '0',
+      ACTLOGRETENTION: '30', LICENSECOMPLIANCE: 'Valid',
+      MAXSESSIONS: '99', MAXSCHEDSESSIONS: '79',
+      ACCOUNTING: 'ON', QUERYSCHEDPERIOD: '1',
+    }],
+  })['doc_01_status.csv'];
+  stateA.archive.filename = 'a.tar';
+  const stateB = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  stateB.archive.filename = 'b.tar';
+  const reportA = evaluateHealthcheckReport(stateA);
+  const reportB = evaluateHealthcheckReport(stateB);
+  if (findHealthRule(reportA, 'maxsessions').status === 'RED' && findHealthRule(reportB, 'maxsessions').status === 'GREEN') ok('Healthcheck: rerun replaces prior results instead of mixing state');
+  else fail('Healthcheck: rerun/new archive appears to mix prior results');
+  if (createArchiveToken(stateA) !== createArchiveToken(stateB)) ok('Healthcheck: archive token changes when archive identity changes');
+  else fail('Healthcheck: archive token did not change for new archive');
+}
+
+section('37. Healthcheck AI model filtering and response parsing');
+{
+  const filtered = filterCompatibleOpenAiModels([
+    { id: 'gpt-4.1' },
+    { id: 'gpt-4o-mini' },
+    { id: 'text-embedding-3-small' },
+    { id: 'omni-moderation-latest' },
+    { id: 'o4-mini' },
+    { id: 'gpt-4o-mini-tts' },
+  ]);
+  if (filtered.includes('gpt-4.1') && filtered.includes('gpt-4o-mini') && filtered.includes('o4-mini')) ok('Healthcheck: compatible text/reasoning models are retained');
+  else fail('Healthcheck: expected compatible models missing after filtering');
+  if (!filtered.includes('text-embedding-3-small') && !filtered.includes('omni-moderation-latest') && !filtered.includes('gpt-4o-mini-tts')) ok('Healthcheck: non-text / embedding / moderation / TTS models are filtered out');
+  else fail('Healthcheck: incompatible models were not filtered out');
+
+  const parsed1 = parseOpenAiResponseText({ output_text: 'alpha' });
+  const parsed2 = parseOpenAiResponseText({ output: [{ content: [{ type: 'output_text', text: 'beta' }] }] });
+  if (parsed1 === 'alpha' && parsed2 === 'beta') ok('Healthcheck: Responses API text parsing supports direct and nested formats');
+  else fail(`Healthcheck: response parsing mismatch (${parsed1} / ${parsed2})`);
+
+  const payloadState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  payloadState.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [
+      {
+        MAXSESSIONS: '99', MAXSCHEDSESSIONS: '79',
+        ACTLOGRETENTION: '30', IDLETIMEOUT: '15', COMMTIMEOUT: '120',
+        EXPINTERVAL: '1', QUERYSP: '15', CLIENTACCT: 'OUTPUT'
+      }
+    ]
+  })['doc_01_status.csv'];
+  const payload = buildHealthcheckAiPayload(evaluateHealthcheckReport(payloadState), 300);
+  if (payload.modelInput.findings.some(item => item.status === 'AMBER' || item.status === 'RED')) ok('Healthcheck: AI payload preserves high-priority findings before truncation');
+  else fail('Healthcheck: AI payload did not preserve high-priority findings');
+}
+
+section('38. Healthcheck AI request, checkbox guard, and key hygiene');
+{
+  if (/if\s*\(!includeAi\)\s*return;/.test(runHealthcheckAnalysis.toString())) ok('Healthcheck: run path returns before any OpenAI request when the include-AI checkbox is unchecked');
+  else fail('Healthcheck: include-AI guard missing from runHealthcheckAnalysis');
+  const saveConfigMatch = js.match(/function saveConfig\([\s\S]*?\n}\n/);
+  if (saveConfigMatch && !/healthcheckOpenAiKey|healthcheckCustomModel|healthcheckModelSelect/.test(saveConfigMatch[0])) ok('Healthcheck: saveConfig/localStorage persistence excludes AI key/model controls');
+  else fail('Healthcheck: AI key/model controls leaked into saveConfig/localStorage persistence');
+  if (html.includes('id="healthcheckCustomModel"')) ok('Healthcheck UI includes a custom model ID input');
+  else fail('Healthcheck UI missing custom model ID input');
+  const report = evaluateHealthcheckReport(makeHealthState(clone(HEALTH_FIXTURE_GOOD)));
+  const htmlOut = buildHealthcheckReportHtml(report, 'blob:test');
+  const docxXml = parseStoredZipEntries(buildHealthcheckDocxBytes(report)).get('word/document.xml') || '';
+  if (!htmlOut.includes('sk-test-secret') && !docxXml.includes('sk-test-secret')) ok('Healthcheck: deterministic report output does not leak API-key text');
+  else fail('Healthcheck: API-key text leaked into deterministic report output');
+}
+
+section('39. Healthcheck separate-tab HTML escaping and ordering');
+{
+  const report = evaluateHealthcheckReport(makeHealthState(clone(HEALTH_FIXTURE_GOOD)));
+  report.results[0].finding = '<script>alert(1)</script>';
+  report.results[0].recommendation = '<b>bold</b>';
+  report.aiAnalysis = { text: '<img src=x onerror=alert(1)>', model: 'gpt-4.1', generatedAt: '2026-07-15T12:34:56Z' };
+  const htmlOut = buildHealthcheckReportHtml(report, 'blob:test');
+  if (htmlOut.includes('&lt;script&gt;alert(1)&lt;/script&gt;') && htmlOut.includes('&lt;img src=x onerror=alert(1)&gt;')) ok('Healthcheck: separate-tab HTML escapes imported/model text');
+  else fail('Healthcheck: separate-tab HTML did not escape imported/model text');
+  if (htmlOut.indexOf('Detailed findings by section') < htmlOut.indexOf('AI-assisted analysis')) ok('Healthcheck: deterministic findings appear before AI analysis');
+  else fail('Healthcheck: AI analysis appeared before deterministic findings');
+}
+
+section('40. Healthcheck DOCX structure and AI ordering');
+{
+  const report = evaluateHealthcheckReport(makeHealthState(clone(HEALTH_FIXTURE_GOOD)));
+  report.aiAnalysis = { text: 'AI follow-up', model: 'gpt-4.1', generatedAt: '2026-07-15T12:34:56Z' };
+  const entries = parseStoredZipEntries(buildHealthcheckDocxBytes(report));
+  const required = ['[Content_Types].xml', '_rels/.rels', 'docProps/core.xml', 'docProps/app.xml', 'word/document.xml', 'word/styles.xml', 'word/_rels/document.xml.rels'];
+  required.forEach(name => {
+    if (entries.has(name)) ok(`Healthcheck DOCX includes ${name}`);
+    else fail(`Healthcheck DOCX missing ${name}`);
+  });
+  const docXml = entries.get('word/document.xml') || '';
+  if (docXml.includes('StorageTools — HELIX Healthcheck Analysis')) ok('Healthcheck DOCX contains report title');
+  else fail('Healthcheck DOCX missing report title');
+  if (docXml.indexOf('Overall traffic light') < docXml.indexOf('AI-assisted analysis')) ok('Healthcheck DOCX places AI section after deterministic content');
+  else fail('Healthcheck DOCX AI section ordering incorrect');
+  const docxName = defaultHealthcheckDocxFilename({ customer: 'ACME / <>', server: 'SRV:1', reportDate: '2026-07-15' });
+  if (!/[<>:\"/\\|?*]/.test(docxName) && /\.docx$/i.test(docxName)) ok('Healthcheck DOCX filename is sanitized and ends with .docx');
+  else fail(`Healthcheck DOCX filename not sanitized: ${docxName}`);
 }
 
 
