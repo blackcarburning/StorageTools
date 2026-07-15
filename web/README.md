@@ -28,7 +28,7 @@ Fill in:
 - **Windows / Unix option file path** — optional, leave blank if the client defaults already select the target server
 - **Server name / label** — used to name output files only; **does not select the target server**. The target server is selected by the option file or by the administrative client's default options.
 - **Customer name** — included in report headers
-- **Windows / Unix output directory** — where the generated scripts write CSV output (default: `StorageTools_Output`)
+- **Windows / Unix output directory** — collection output folder (default: `StorageTools_Output`). Relative paths are resolved from the directory where the script is run; absolute paths are used as entered.
 
 Click **Save to Browser** to persist settings between sessions (the password is never saved).
 
@@ -37,7 +37,7 @@ Download exactly one of the unified script types:
 - **Download Complete CMD**
 - **Download Complete SH**
 
-Both formats run the same canonical collection of **78 queries**, package all results into one `.tar` archive, and leave only that archive file on disk.
+Both formats run the same canonical collection of **78 queries**, package all results into one `.tar` archive inside the configured output folder, and remove only the current run’s temporary working files.
 
 Generated filenames:
 - `StorageTools_Complete_<SERVER>.cmd`
@@ -62,7 +62,7 @@ chmod +x StorageTools_Complete_TSMSERVER01.sh
 
 Each query writes one `.csv` file into a temporary working directory. The script performs a credential/connection preflight before running queries, echoes per-query status in real time, mirrors stderr to `collection_errors.log`, translates IBM return codes, and prints final pass/warn/fail totals.
 
-On completion the script packages all CSV files, `collection_log.txt`, `collection_errors.log`, and `manifest.txt` into a single `.tar` archive, verifies the archive is valid and non-empty, then removes the working directory. **If archiving fails, the working directory and all individual files are retained for manual recovery.**
+On completion the script packages all CSV files, `collection_log.txt`, `collection_errors.log`, and `manifest.txt` into a single `.tar` archive, verifies the archive is valid and non-empty, then removes only the temporary working directory for that run. The configured output folder itself is kept. **If archiving fails (or the archive is empty), the working directory and generated files are retained for manual recovery.** Pre-existing unrelated files in the output folder are never deleted.
 
 Final archive filename:
 - `StorageTools_Complete_<SANITIZED_SERVER>_<UTC_TIMESTAMP>.tar`
