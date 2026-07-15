@@ -387,7 +387,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
     </div>
     <div class="actions">
       <button class="btn btn-primary" id="btnRunHealthcheck" onclick="runHealthcheckAnalysis()">🚦 Run / Generate Traffic Light Report</button>
-      <button class="btn btn-success" id="btnDownloadHealthcheckDocx" onclick="downloadLatestHealthcheckDocx()" disabled>⬇ Download DOCX</button>
+      <button class="btn btn-success" id="btnDownloadHealthcheckDocx" onclick="downloadLatestHealthcheckDocx()" aria-label="Download the latest Healthcheck DOCX report" disabled>⬇ Download DOCX</button>
     </div>
     <div id="healthcheckRunStatus" class="alert alert-info" style="display:none"></div>
   </div>
@@ -4362,18 +4362,29 @@ function renderHealthcheckDataStatus() {
   el.innerHTML = `${archiveText}<strong>Imported datasets:</strong> ${imported} · <strong>Healthcheck sources present:</strong> ${required.size - missing.length}/${required.size}<br>${sufficiency}`;
 }
 
+const HEALTHCHECK_USER_TEXT_REPLACEMENTS = [
+  [/\s*\(blank\/null addresses excluded,\s*as per Perl parity\)\.?/gi, ' (blank/null addresses excluded).'],
+  [/The Perl source has no explicit branch for exactly 1 unavailable container, so the overall traffic light is left unchanged for parity\./g, 'Exactly one unavailable container requires manual review; the overall traffic light remains unchanged.'],
+  [/SCHEDMODE value '([^']+)' was not recognised by the Perl rule/g, "SCHEDMODE value '$1' was not recognised by this healthcheck"],
+  [/could not be parsed for exact parity\./g, 'could not be parsed.'],
+  [/within the explicit Perl-supported set\./g, 'within the explicitly supported set.'],
+  [/above the explicit Perl branch set\./g, 'above the explicitly classified version set.'],
+  [/The Perl source explicitly classifies only major versions 7, 8, and 9 as supported\. Version /g, 'Versions 7, 8, and 9 are explicitly classified as supported in this healthcheck. Version '],
+  [/ is left informational for parity\./g, ' remains informational and should be reviewed.'],
+  [/\bPerl\b/gi, 'original'],
+  [/\bparity\b/gi, 'alignment']
+];
+
 function sanitizeHealthcheckUserText(text) {
-  return String(text == null ? '' : text)
-    .replace(/\s*\(blank\/null addresses excluded,\s*as per Perl parity\)\.?/gi, ' (blank/null addresses excluded).')
-    .replace(/The Perl source has no explicit branch for exactly 1 unavailable container, so the overall traffic light is left unchanged for parity\./g, 'Exactly one unavailable container requires manual review; the overall traffic light remains unchanged.')
-    .replace(/SCHEDMODE value '([^']+)' was not recognised by the Perl rule/g, "SCHEDMODE value '$1' was not recognised by this healthcheck")
-    .replace(/could not be parsed for exact parity\./g, 'could not be parsed.')
-    .replace(/within the explicit Perl-supported set\./g, 'within the explicitly supported set.')
-    .replace(/above the explicit Perl branch set\./g, 'above the explicitly classified version set.')
-    .replace(/The Perl source explicitly classifies only major versions 7, 8, and 9 as supported\. Version /g, 'Versions 7, 8, and 9 are explicitly classified as supported in this healthcheck. Version ')
-    .replace(/ is left informational for parity\./g, ' remains informational and should be reviewed.')
-    .replace(/\bPerl\b/gi, 'original')
-    .replace(/\bparity\b/gi, 'alignment');
+  let safe = String(text == null ? '' : text);
+  HEALTHCHECK_USER_TEXT_REPLACEMENTS.forEach(([pattern, replacement]) => {
+    safe = safe.replace(pattern, replacement);
+  });
+  return safe;
+}
+
+function escapeRegExp(value) {
+  return String(value == null ? '' : value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function formatHealthcheckTimestamp(value) {
@@ -4385,12 +4396,27 @@ function formatHealthcheckTimestamp(value) {
 
 function sanitizeAiErrorMessage(message, apiKey) {
   let safe = String(message == null ? '' : message);
-  if (apiKey) safe = safe.split(apiKey).join('[redacted]');
+  if (apiKey) {
+    const patterns = Array.from(new Set([apiKey, encodeURIComponent(apiKey)].filter(Boolean)));
+    patterns.forEach(pattern => {
+      safe = safe.replace(new RegExp(escapeRegExp(pattern), 'g'), '[redacted]');
+    });
+  }
   safe = safe
     .replace(/Authorization\s*:\s*Bearer\s+[^\s'"]+/gi, 'Authorization: ******')
     .replace(/Bearer\s+sk-[A-Za-z0-9_-]+/gi, '******')
     .replace(/sk-[A-Za-z0-9_-]{8,}/gi, '[redacted]');
   return safe.trim();
+}
+
+function healthcheckTextFingerprint(text) {
+  const value = String(text == null ? '' : text);
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${value.length}:${(hash >>> 0).toString(16)}`;
 }
 
 function getHealthcheckAiDisplayInfo(report) {
@@ -4420,7 +4446,7 @@ function getHealthcheckReportSignature(report) {
     ai.model,
     ai.requestedAt,
     ai.generatedAt,
-    ai.text,
+    healthcheckTextFingerprint(ai.text),
     ai.promptTruncated ? 'truncated' : 'full'
   ].join('::');
 }
@@ -4502,6 +4528,7 @@ function renderHealthcheckSummary() {
       docxBtn.disabled = true;
       docxBtn.textContent = '⬇ Download DOCX';
       docxBtn.title = 'Run the healthcheck report first.';
+      if (docxBtn.setAttribute) docxBtn.setAttribute('aria-label', 'Run the Healthcheck report before downloading the DOCX.');
     }
     if (statusEl) statusEl.style.display = 'none';
     renderHealthcheckAiPanelStatus();
@@ -4520,6 +4547,9 @@ function renderHealthcheckSummary() {
     docxBtn.title = ai.state === 'GENERATING'
       ? 'Wait for the AI-assisted analysis to finish before exporting the final DOCX.'
       : 'Download the latest Healthcheck DOCX report.';
+    if (docxBtn.setAttribute) docxBtn.setAttribute('aria-label', ai.state === 'GENERATING'
+      ? 'DOCX export is unavailable while AI-assisted analysis is generating.'
+      : 'Download the latest Healthcheck DOCX report.');
   }
   if (statusEl) {
     statusEl.className = ai.state === 'FAILED' ? 'alert alert-warn' : ai.state === 'GENERATING' ? 'alert alert-info' : 'alert alert-success';
@@ -4815,8 +4845,8 @@ function buildHealthcheckReportToolbarHtml(report, docxUrl) {
   const ai = getHealthcheckAiDisplayInfo(report || {});
   const pending = ai.state === 'GENERATING';
   const downloadHtml = pending
-    ? '<span class="btn btn-gray" aria-disabled="true" title="Wait for the AI-assisted evaluation to finish before exporting the final DOCX.">⬇ DOCX available after AI completes</span>'
-    : `<a class="btn btn-success" href="${escapeAttr(docxUrl || '#')}" download="${escapeAttr(defaultHealthcheckDocxFilename((report && report.metadata) || {}))}">⬇ Download DOCX</a>`;
+    ? '<span class="btn btn-gray" aria-disabled="true" aria-label="DOCX export is unavailable while AI-assisted analysis is generating." title="Wait for the AI-assisted evaluation to finish before exporting the final DOCX.">⬇ DOCX available after AI completes</span>'
+    : `<a class="btn btn-success" aria-label="Download the latest Healthcheck DOCX report" href="${escapeAttr(docxUrl || '#')}" download="${escapeAttr(defaultHealthcheckDocxFilename((report && report.metadata) || {}))}">⬇ Download DOCX</a>`;
   return `<div class="health-report-toolbar">
     <button class="btn btn-primary" onclick="window.print()">🖨 Print / Save as PDF</button>
     ${downloadHtml}
@@ -4841,7 +4871,7 @@ ${getEmbeddedAppCss()}
 <div class="health-report-shell">
   <div class="health-report-toolbar">
     <button class="btn btn-primary" onclick="window.print()">🖨 Print / Save as PDF</button>
-    <span class="btn btn-gray" aria-disabled="true">⬇ DOCX available after report generation</span>
+    <span class="btn btn-gray" aria-disabled="true" aria-label="DOCX export is unavailable until report generation completes.">⬇ DOCX available after report generation</span>
   </div>
   <div class="health-report-cover">
     <h1 style="margin:0 0 8px;color:#1a3a5c">StorageTools — HELIX Healthcheck Analysis</h1>

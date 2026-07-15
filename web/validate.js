@@ -66,6 +66,7 @@ try {
     style: {},
     classList: { add() {}, remove() {} },
     addEventListener() {},
+    setAttribute(name, val) { this[name] = val; },
     click() {},
   });
   const defaults = {
@@ -1939,8 +1940,20 @@ section('37. Healthcheck AI model filtering and response parsing');
 
 section('38. Healthcheck AI request, checkbox guard, and key hygiene');
 {
-  if (/if\s*\(!includeAi\)\s*\{[\s\S]*?return;[\s\S]*?\}/.test(runHealthcheckAnalysis.toString())) ok('Healthcheck: run path returns before any OpenAI request when the include-AI checkbox is unchecked');
-  else fail('Healthcheck: include-AI guard missing from runHealthcheckAnalysis');
+  const uncheckedState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  STATE.imported = clone(uncheckedState.imported);
+  STATE.archive = clone(uncheckedState.archive);
+  __elements.get('healthcheckIncludeAi').checked = false;
+  let fetchCalls = 0;
+  const oldOpen = global.open;
+  const oldFetch = global.fetch;
+  global.open = () => ({ document: { open() {}, write() {}, close() {} } });
+  global.fetch = () => { fetchCalls++; throw new Error('fetch should not be called when AI is disabled'); };
+  runHealthcheckAnalysis();
+  global.open = oldOpen;
+  global.fetch = oldFetch;
+  if (fetchCalls === 0) ok('Healthcheck: run path makes no OpenAI request when the include-AI checkbox is unchecked');
+  else fail('Healthcheck: include-AI disabled path still attempted an OpenAI request');
   const saveConfigMatch = js.match(/function saveConfig\([\s\S]*?\n}\n/);
   if (saveConfigMatch && !/healthcheckOpenAiKey|healthcheckCustomModel|healthcheckModelSelect/.test(saveConfigMatch[0])) ok('Healthcheck: saveConfig/localStorage persistence excludes AI key/model controls');
   else fail('Healthcheck: AI key/model controls leaked into saveConfig/localStorage persistence');
