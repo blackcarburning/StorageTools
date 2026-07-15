@@ -4413,8 +4413,11 @@ function sanitizeAiErrorMessage(message, apiKey) {
 
 function healthcheckTextFingerprint(text) {
   const value = String(text == null ? '' : text);
-  // FNV-1a 32-bit hash, used only to fingerprint potentially large AI narrative text
-  // for DOCX cache invalidation without embedding the full narrative in the signature.
+  // FNV-1a 32-bit hash. For this local DOCX cache key we only need a fast, lightweight
+  // fingerprint that changes when the narrative text changes; cryptographic strength is
+  // unnecessary because this value is not used for security decisions or persistence.
+  // The AI narratives here are short enough that a compact 32-bit fingerprint is a
+  // reasonable trade-off between speed, simplicity, and very low collision risk.
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) {
     hash ^= value.charCodeAt(i);
