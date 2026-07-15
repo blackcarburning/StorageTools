@@ -185,6 +185,7 @@ footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8p
       <div class="fg">
         <label>Windows Output Directory</label>
         <input type="text" id="outputDirWindows" value="StorageTools_Output">
+        <span class="hint">Output folder for <code>.cmd</code> scripts. Relative paths resolve from the directory where the script is run; absolute paths can be drive-root (e.g. <code>C:\Data\Out</code>) or UNC (e.g. <code>\\server\share\Out</code>).</span>
         <span class="hint">CSV output folder for <code>.cmd</code> scripts. The default <code>StorageTools_Output</code> is a relative path that works without any path-separator concerns. Use backslashes for absolute paths (e.g. <code>C:\TSM\Output</code>).</span>
       </div>
       <div class="fg">
@@ -1340,7 +1341,11 @@ function generateCmdContent() {
   lines.push('  MOVE /Y "%ARCHIVE_TMP%" "%ARCHIVE_FILE%" >NUL');
   lines.push('  echo Archive created: %ARCHIVE_FILE%');
   lines.push('  echo %DATE% %TIME% archive created: %ARCHIVE_FILE% >> "%WORKDIR%\\collection_log.txt"');
-  lines.push('  IF /I "%WORKDIR%"=="%OUTDIR%" (');
+  lines.push('  IF /I "%WORKDIR%"=="." (');
+  lines.push('    echo [WARN] Working directory safety check failed; diagnostic files retained in: %WORKDIR% 1>&2');
+  lines.push('  ) ELSE IF /I "%WORKDIR%"==".." (');
+  lines.push('    echo [WARN] Working directory safety check failed; diagnostic files retained in: %WORKDIR% 1>&2');
+  lines.push('  ) ELSE IF /I "%WORKDIR%"=="%OUTDIR%" (');
   lines.push('    echo [WARN] Working directory safety check failed; diagnostic files retained in: %WORKDIR% 1>&2');
   lines.push('  ) ELSE (');
   lines.push('    RD /S /Q "%WORKDIR%"');
@@ -1503,7 +1508,7 @@ function generateShContent() {
   lines.push('cleanup() { [ -n "$QTMP" ] && rm -f "$QTMP"; [ -n "$PREFLIGHT_TMP" ] && rm -f "$PREFLIGHT_TMP"; [ -n "$ARCHIVE_TMP" ] && rm -f "$ARCHIVE_TMP"; }');
   lines.push('safe_remove_workdir() {');
   lines.push('  case "$1" in');
-  lines.push('    ""|"/"|"."|"./"|"$OUTDIR"|"$LAUNCH_DIR") return 1 ;;');
+  lines.push('    ""|"/"|"."|"./"|".."|"../"|"$OUTDIR"|"$LAUNCH_DIR") return 1 ;;');
   lines.push('    "$OUTDIR"/.work_*) rm -rf "$1" ;;');
   lines.push('    *) return 1 ;;');
   lines.push('  esac');

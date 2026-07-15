@@ -438,8 +438,18 @@ section('14. Output-directory resolution and safety');
 
   if (cmd.includes('IF /I "%WORKDIR%"=="%OUTDIR%" (')) ok('CMD protects against deleting output directory during cleanup');
   else fail('CMD missing output-directory cleanup safety guard');
-  if (sh.includes('""|"/"|"."|"./"|"$OUTDIR"|"$LAUNCH_DIR") return 1 ;;')) ok('SH guards dangerous cleanup targets');
-  else fail('SH missing dangerous cleanup guard');
+  if (cmd.includes('ELSE IF /I "%WORKDIR%"==".." (')) ok('CMD guards against parent-directory cleanup');
+  else fail('CMD missing parent-directory cleanup guard');
+  const shDangerGuards = [
+    '""|"/"',
+    '"."',
+    '".."',
+    '"$OUTDIR"',
+    '"$LAUNCH_DIR"',
+  ];
+  const missingShDangerGuards = shDangerGuards.filter(token => !sh.includes(token));
+  if (missingShDangerGuards.length === 0) ok('SH guards dangerous cleanup targets');
+  else fail(`SH missing dangerous cleanup guard tokens: ${missingShDangerGuards.join(', ')}`);
   if (sh.includes('safe_remove_workdir "$WORKDIR"')) ok('SH cleanup removes only working directory');
   else fail('SH should remove only current-run working directory');
   if (cmd.includes('RD /S /Q "%WORKDIR%"')) ok('CMD cleanup removes only working directory');
