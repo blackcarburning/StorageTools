@@ -1657,7 +1657,9 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
     ACTLOGRETENTION: '30', LICENSECOMPLIANCE: 'Valid',
     MAXSESSIONS: '300', MAXSCHEDSESSIONS: '240',
     ACCOUNTING: 'ON', QUERYSCHEDPERIOD: '1',
+    SCHEDMODE: 'POLLING', SUMMARYRETENTION: '30', EVENTRETENTION: '30',
   }],
+  'doc_02_db.csv': [{ DATABASE_NAME: 'TSMDB1', FULL_DEV_CLASS: 'LTO' }],
   'doc_04_log.csv': [{ PCT_USED: '25', MIRROR_LOG_DIR: '/mirror/log', AFAILOVER_LOG_DIR: '/fail/log' }],
   'doc_05_options.csv': [
     { OPTION_NAME: 'movebatchsize', OPTION_VALUE: '1000' },
@@ -1668,6 +1670,10 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
     { OPTION_NAME: 'expinterval', OPTION_VALUE: '0' },
   ],
   'doc_06_admins.csv': [{ ADMIN_NAME: 'ADMIN', LOCKED: 'YES' }],
+  'doc_07_nodes.csv': [
+    { NODE_NAME: 'NODE1', TCP_ADDRESS: '192.168.1.10' },
+    { NODE_NAME: 'NODE2', TCP_ADDRESS: '192.168.1.11' },
+  ],
   'doc_10_filespaces.csv': [{ NODE_NAME: 'NODE1', FILESPACE_NAME: '/fs1', BACKUP_END: '2026-07-10T00:00:00Z' }],
   'doc_17_admin_schedules.csv': [
     { SCHEDULE_NAME: 'DB_SCHED', COMMAND: 'RUN SCRIPT_DB', ACTIVE: 'YES' },
@@ -1681,7 +1687,7 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
   'doc_23_drives.csv': [{ LIBRARY_NAME: 'LIB1', DRIVE_NAME: 'DRV1', ONLINE: 'YES' }],
   'doc_24_paths.csv': [{ SOURCE_NAME: 'SRV1', ONLINE: 'YES' }],
   'doc_26_disk_volumes.csv': [{ VOLUME_NAME: 'VOL1', STATUS: 'ONLINE' }],
-  'doc_34_drm_status.csv': [{ DBBEXPIREDAYS: '3', CHECKLABEL: 'No' }],
+  'doc_34_drm_status.csv': [{ DBBEXPIREDAYS: '3', CHECKLABEL: 'No', FILEPROCESS: 'No' }],
   'hc_01_db_space.csv': [{ DB_PCT_USED: '70' }],
   'hc_02_db_backups.csv': [
     { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-15T06:00:00Z' },
@@ -1689,6 +1695,8 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
     { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-13T06:00:00Z' },
   ],
   'hc_25_container_state.csv': [{ STGPOOL_NAME: 'DIRPOOL1', STATE: 'AVAILABLE', CONTAINER_COUNT: '10' }],
+  'hc_35_scratch_warnings.csv': [],
+  'hc_36_tape_mounts.csv': [{ DRIVE_COUNT: '4', TOTAL_MOUNT_MINUTES: '100', WINDOW_HOURS: '168' }],
   'doc_39_scripts.csv': [
     { NAME: 'script_db', COMMAND: 'backup db type=full' },
     { NAME: 'script_stg', COMMAND: 'backup stgpool TAPEPOOL1' },
@@ -1971,8 +1979,514 @@ section('40. Healthcheck DOCX structure and AI ordering');
 }
 
 
-console.log('\n============================================================');
-console.log(`Results: ${PASS} passed, ${FAIL} failed`);
+section('41. New collection field coverage in queries');
+{
+  const statusQ = ALL_QUERIES.find(q => q.id === 'doc_01_status');
+  if (statusQ && /SCHEDMODE/.test(statusQ.sql)) ok('doc_01_status SQL includes SCHEDMODE');
+  else fail('doc_01_status SQL missing SCHEDMODE');
+  if (statusQ && /SUMMARYRETENTION/.test(statusQ.sql)) ok('doc_01_status SQL includes SUMMARYRETENTION');
+  else fail('doc_01_status SQL missing SUMMARYRETENTION');
+  if (statusQ && /EVENTRETENTION/.test(statusQ.sql)) ok('doc_01_status SQL includes EVENTRETENTION');
+  else fail('doc_01_status SQL missing EVENTRETENTION');
+  if (statusQ && /ACTLOGRETENTION/.test(statusQ.sql) && /LICENSECOMPLIANCE/.test(statusQ.sql) && /MAXSESSIONS/.test(statusQ.sql)) ok('doc_01_status SQL retains existing columns');
+  else fail('doc_01_status SQL lost existing columns');
+
+  const drmQ = ALL_QUERIES.find(q => q.id === 'doc_34_drm_status');
+  if (drmQ && /FILEPROCESS/.test(drmQ.sql)) ok('doc_34_drm_status SQL includes FILEPROCESS');
+  else fail('doc_34_drm_status SQL missing FILEPROCESS');
+  if (drmQ && /DBBEXPIREDAYS/.test(drmQ.sql) && /CHECKLABEL/.test(drmQ.sql)) ok('doc_34_drm_status SQL retains DBBEXPIREDAYS and CHECKLABEL');
+  else fail('doc_34_drm_status SQL lost existing columns');
+  if (drmQ && Array.isArray(drmQ.columns) && drmQ.columns.includes('FILEPROCESS')) ok('doc_34_drm_status columns metadata includes FILEPROCESS');
+  else fail('doc_34_drm_status columns metadata missing FILEPROCESS');
+  if (drmQ && Array.isArray(drmQ.columns) && drmQ.columns.includes('DBBEXPIREDAYS') && drmQ.columns.includes('CHECKLABEL')) ok('doc_34_drm_status columns metadata retains DBBEXPIREDAYS and CHECKLABEL');
+  else fail('doc_34_drm_status columns metadata lost existing columns');
+
+  const nodeQ = ALL_QUERIES.find(q => q.id === 'doc_07_nodes');
+  if (nodeQ && /TCP_ADDRESS/.test(nodeQ.sql)) ok('doc_07_nodes SQL includes TCP_ADDRESS');
+  else fail('doc_07_nodes SQL missing TCP_ADDRESS');
+  if (nodeQ && /NODE_NAME/.test(nodeQ.sql) && /DOMAIN_NAME/.test(nodeQ.sql) && /DEDUPLICATION/.test(nodeQ.sql)) ok('doc_07_nodes SQL retains existing columns');
+  else fail('doc_07_nodes SQL lost existing columns');
+}
+
+section('42. Scratch warnings query correctness');
+{
+  const scratchQ = ALL_QUERIES.find(q => q.id === 'hc_35_scratch_warnings');
+  if (scratchQ) ok('hc_35_scratch_warnings query exists');
+  else { fail('hc_35_scratch_warnings query missing'); }
+
+  if (scratchQ) {
+    const sql = scratchQ.sql.toUpperCase();
+    const EXPECTED_MSGNOS = [692, 1403, 1404, 1405, 1407, 3516, 4583, 6984, 8945];
+    EXPECTED_MSGNOS.forEach(n => {
+      if (sql.includes(String(n))) ok(`hc_35_scratch_warnings SQL includes MSGNO ${n}`);
+      else fail(`hc_35_scratch_warnings SQL missing MSGNO ${n}`);
+    });
+    if (!/48\s*HOUR/i.test(scratchQ.sql)) ok('hc_35_scratch_warnings SQL has no 48-hour restriction');
+    else fail('hc_35_scratch_warnings SQL incorrectly has a 48-hour restriction');
+    if (/COUNT/i.test(scratchQ.sql)) ok('hc_35_scratch_warnings SQL uses COUNT aggregate');
+    else fail('hc_35_scratch_warnings SQL missing COUNT aggregate');
+    if (scratchQ.outputFile === 'hc_35_scratch_warnings.csv') ok('hc_35_scratch_warnings output file is hc_35_scratch_warnings.csv');
+    else fail(`hc_35_scratch_warnings unexpected output file: ${scratchQ.outputFile}`);
+    if (Array.isArray(scratchQ.columns) && scratchQ.columns.includes('MSGNO') && scratchQ.columns.includes('WARNING_COUNT')) ok('hc_35_scratch_warnings columns metadata is correct');
+    else fail('hc_35_scratch_warnings columns metadata incorrect');
+  }
+
+  // hc_18_actlog_errors 48-hour query must still exist
+  const actlogQ = ALL_QUERIES.find(q => q.id === 'hc_18_actlog_errors');
+  if (actlogQ && /48\s*HOUR/i.test(actlogQ.sql)) ok('hc_18_actlog_errors (48-hour window) is preserved');
+  else fail('hc_18_actlog_errors (48-hour window) has been removed or altered');
+}
+
+section('43. Tape-mount query correctness');
+{
+  const mountQ = ALL_QUERIES.find(q => q.id === 'hc_36_tape_mounts');
+  if (mountQ) ok('hc_36_tape_mounts query exists');
+  else { fail('hc_36_tape_mounts query missing'); }
+
+  if (mountQ) {
+    const sql = mountQ.sql.toUpperCase();
+    if (sql.includes("'TAPE MOUNT'") || sql.includes('"TAPE MOUNT"')) ok("hc_36_tape_mounts SQL filters ACTIVITY='TAPE MOUNT'");
+    else fail("hc_36_tape_mounts SQL missing ACTIVITY='TAPE MOUNT'");
+    if (/168\s*HOUR/i.test(mountQ.sql)) ok('hc_36_tape_mounts SQL uses 168-hour window');
+    else fail('hc_36_tape_mounts SQL missing 168-hour window');
+    if (/DRIVE_COUNT/i.test(mountQ.sql)) ok('hc_36_tape_mounts SQL includes DRIVE_COUNT');
+    else fail('hc_36_tape_mounts SQL missing DRIVE_COUNT');
+    if (/TOTAL_MOUNT_MINUTES/i.test(mountQ.sql)) ok('hc_36_tape_mounts SQL includes TOTAL_MOUNT_MINUTES');
+    else fail('hc_36_tape_mounts SQL missing TOTAL_MOUNT_MINUTES');
+    if (/FROM\s+DRIVES/i.test(mountQ.sql)) ok('hc_36_tape_mounts SQL counts FROM DRIVES');
+    else fail('hc_36_tape_mounts SQL missing FROM DRIVES');
+    if (/COALESCE/i.test(mountQ.sql)) ok('hc_36_tape_mounts SQL uses COALESCE to handle null SUM');
+    else fail('hc_36_tape_mounts SQL missing COALESCE (null SUM not handled)');
+    if (mountQ.outputFile === 'hc_36_tape_mounts.csv') ok('hc_36_tape_mounts output file is hc_36_tape_mounts.csv');
+    else fail(`hc_36_tape_mounts unexpected output file: ${mountQ.outputFile}`);
+    if (Array.isArray(mountQ.columns) && mountQ.columns.includes('DRIVE_COUNT') && mountQ.columns.includes('TOTAL_MOUNT_MINUTES') && mountQ.columns.includes('WINDOW_HOURS')) ok('hc_36_tape_mounts columns metadata is correct');
+    else fail('hc_36_tape_mounts columns metadata incorrect');
+  }
+}
+
+section('44. CMD and SH include new queries');
+{
+  const cmd = generateCmdContent();
+  const sh  = generateShContent();
+  if (cmd.includes('hc_35_scratch_warnings.csv')) ok('CMD includes hc_35_scratch_warnings.csv');
+  else fail('CMD missing hc_35_scratch_warnings.csv');
+  if (sh.includes('hc_35_scratch_warnings.csv')) ok('SH includes hc_35_scratch_warnings.csv');
+  else fail('SH missing hc_35_scratch_warnings.csv');
+  if (cmd.includes('hc_36_tape_mounts.csv')) ok('CMD includes hc_36_tape_mounts.csv');
+  else fail('CMD missing hc_36_tape_mounts.csv');
+  if (sh.includes('hc_36_tape_mounts.csv')) ok('SH includes hc_36_tape_mounts.csv');
+  else fail('SH missing hc_36_tape_mounts.csv');
+}
+
+section('45. Schedule Mode healthcheck rule boundaries');
+{
+  const polling = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  const pollingReport = evaluateHealthcheckReport(polling);
+  if (findHealthRule(pollingReport, 'schedmode').status === 'GREEN') ok('Healthcheck: SCHEDMODE=POLLING is green');
+  else fail('Healthcheck: SCHEDMODE=POLLING should be green');
+
+  const anyMode = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  anyMode.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{ ...HEALTH_FIXTURE_GOOD['doc_01_status.csv'].rows[0].reduce((obj, v, i) => { obj[HEALTH_FIXTURE_GOOD['doc_01_status.csv'].headers[i]] = v; return obj; }, {}), SCHEDMODE: 'ANY' }],
+  })['doc_01_status.csv'];
+  const anyReport = evaluateHealthcheckReport(anyMode);
+  if (findHealthRule(anyReport, 'schedmode').status === 'GREEN') ok('Healthcheck: SCHEDMODE=ANY is green');
+  else fail('Healthcheck: SCHEDMODE=ANY should be green');
+
+  const prompted = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  prompted.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{ VERSION:'8', RELEASE:'1', ACTLOGRETENTION:'30', LICENSECOMPLIANCE:'Valid', MAXSESSIONS:'300', MAXSCHEDSESSIONS:'240', ACCOUNTING:'ON', QUERYSCHEDPERIOD:'1', SUMMARYRETENTION:'30', EVENTRETENTION:'30', SCHEDMODE: 'PROMPTED' }],
+  })['doc_01_status.csv'];
+  const promptedReport = evaluateHealthcheckReport(prompted);
+  if (findHealthRule(promptedReport, 'schedmode').status === 'AMBER') ok('Healthcheck: SCHEDMODE=PROMPTED is amber');
+  else fail('Healthcheck: SCHEDMODE=PROMPTED should be amber');
+
+  const blankSchMode = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  blankSchMode.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{ VERSION:'8', RELEASE:'1', ACTLOGRETENTION:'30', LICENSECOMPLIANCE:'Valid', MAXSESSIONS:'300', MAXSCHEDSESSIONS:'240', ACCOUNTING:'ON', QUERYSCHEDPERIOD:'1', SUMMARYRETENTION:'30', EVENTRETENTION:'30', SCHEDMODE: '' }],
+  })['doc_01_status.csv'];
+  const blankSchModeReport = evaluateHealthcheckReport(blankSchMode);
+  if (findHealthRule(blankSchModeReport, 'schedmode').status === 'NOT_TESTED') ok('Healthcheck: blank SCHEDMODE is not tested');
+  else fail('Healthcheck: blank SCHEDMODE should be not tested');
+}
+
+section('46. Summary and Event Log Retention boundaries');
+{
+  const base = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  const baseReport = evaluateHealthcheckReport(base);
+  if (findHealthRule(baseReport, 'summary_retention').status === 'GREEN') ok('Healthcheck: SUMMARYRETENTION=30 is green');
+  else fail('Healthcheck: SUMMARYRETENTION=30 should be green');
+  if (findHealthRule(baseReport, 'event_retention').status === 'GREEN') ok('Healthcheck: EVENTRETENTION=30 is green');
+  else fail('Healthcheck: EVENTRETENTION=30 should be green');
+
+  const above30 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  above30.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{ VERSION:'8', RELEASE:'1', ACTLOGRETENTION:'30', LICENSECOMPLIANCE:'Valid', MAXSESSIONS:'300', MAXSCHEDSESSIONS:'240', ACCOUNTING:'ON', QUERYSCHEDPERIOD:'1', SCHEDMODE:'POLLING', SUMMARYRETENTION:'60', EVENTRETENTION:'45' }],
+  })['doc_01_status.csv'];
+  const above30Report = evaluateHealthcheckReport(above30);
+  if (findHealthRule(above30Report, 'summary_retention').status === 'GREEN') ok('Healthcheck: SUMMARYRETENTION=60 (above 30) is green');
+  else fail('Healthcheck: SUMMARYRETENTION=60 should be green');
+  if (findHealthRule(above30Report, 'event_retention').status === 'GREEN') ok('Healthcheck: EVENTRETENTION=45 (above 30) is green');
+  else fail('Healthcheck: EVENTRETENTION=45 should be green');
+
+  const below30 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  below30.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{ VERSION:'8', RELEASE:'1', ACTLOGRETENTION:'30', LICENSECOMPLIANCE:'Valid', MAXSESSIONS:'300', MAXSCHEDSESSIONS:'240', ACCOUNTING:'ON', QUERYSCHEDPERIOD:'1', SCHEDMODE:'POLLING', SUMMARYRETENTION:'29', EVENTRETENTION:'29' }],
+  })['doc_01_status.csv'];
+  const below30Report = evaluateHealthcheckReport(below30);
+  if (findHealthRule(below30Report, 'summary_retention').status === 'RED') ok('Healthcheck: SUMMARYRETENTION=29 is red');
+  else fail('Healthcheck: SUMMARYRETENTION=29 should be red');
+  if (findHealthRule(below30Report, 'event_retention').status === 'RED') ok('Healthcheck: EVENTRETENTION=29 is red');
+  else fail('Healthcheck: EVENTRETENTION=29 should be red');
+
+  const zeroRetention = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  zeroRetention.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{ VERSION:'8', RELEASE:'1', ACTLOGRETENTION:'30', LICENSECOMPLIANCE:'Valid', MAXSESSIONS:'300', MAXSCHEDSESSIONS:'240', ACCOUNTING:'ON', QUERYSCHEDPERIOD:'1', SCHEDMODE:'POLLING', SUMMARYRETENTION:'0', EVENTRETENTION:'0' }],
+  })['doc_01_status.csv'];
+  const zeroRetReport = evaluateHealthcheckReport(zeroRetention);
+  if (findHealthRule(zeroRetReport, 'summary_retention').status === 'RED') ok('Healthcheck: SUMMARYRETENTION=0 is red');
+  else fail('Healthcheck: SUMMARYRETENTION=0 should be red');
+  if (findHealthRule(zeroRetReport, 'event_retention').status === 'RED') ok('Healthcheck: EVENTRETENTION=0 is red');
+  else fail('Healthcheck: EVENTRETENTION=0 should be red');
+
+  const missingRetention = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  missingRetention.imported['doc_01_status.csv'] = importedFromObjects({
+    'doc_01_status.csv': [{ VERSION:'8', ACTLOGRETENTION:'30', LICENSECOMPLIANCE:'Valid', MAXSESSIONS:'300', MAXSCHEDSESSIONS:'240', ACCOUNTING:'ON', QUERYSCHEDPERIOD:'1', SCHEDMODE:'POLLING' }],
+  })['doc_01_status.csv'];
+  const missingRetReport = evaluateHealthcheckReport(missingRetention);
+  if (findHealthRule(missingRetReport, 'summary_retention').status === 'NOT_TESTED') ok('Healthcheck: absent SUMMARYRETENTION column is not tested');
+  else fail('Healthcheck: absent SUMMARYRETENTION should be not tested');
+  if (findHealthRule(missingRetReport, 'event_retention').status === 'NOT_TESTED') ok('Healthcheck: absent EVENTRETENTION column is not tested');
+  else fail('Healthcheck: absent EVENTRETENTION should be not tested');
+}
+
+section('47. Process File DB Backups rule');
+{
+  const baseGood = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  const baseGoodReport = evaluateHealthcheckReport(baseGood);
+  if (findHealthRule(baseGoodReport, 'fileprocess').status === 'GREEN') ok('Healthcheck: FILEPROCESS=No, non-FILE class, no DBV backups is green');
+  else fail('Healthcheck: FILEPROCESS=No / non-FILE class / no DBV backups should be green');
+
+  // FILEPROCESS=Yes → green (regardless of class)
+  const fpYes = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  fpYes.imported['doc_34_drm_status.csv'] = importedFromObjects({ 'doc_34_drm_status.csv': [{ DBBEXPIREDAYS:'3', CHECKLABEL:'No', FILEPROCESS:'Yes' }] })['doc_34_drm_status.csv'];
+  const fpYesReport = evaluateHealthcheckReport(fpYes);
+  if (findHealthRule(fpYesReport, 'fileprocess').status === 'GREEN') ok('Healthcheck: FILEPROCESS=Yes is green');
+  else fail('Healthcheck: FILEPROCESS=Yes should be green');
+
+  // FILEPROCESS=No, FILE class → red
+  const fpNoFileClass = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  fpNoFileClass.imported['doc_02_db.csv'] = importedFromObjects({ 'doc_02_db.csv': [{ FULL_DEV_CLASS:'FILE' }] })['doc_02_db.csv'];
+  const fpNoFileClassReport = evaluateHealthcheckReport(fpNoFileClass);
+  if (findHealthRule(fpNoFileClassReport, 'fileprocess').status === 'RED') ok('Healthcheck: FILEPROCESS=No with FILE device class is red');
+  else fail('Healthcheck: FILEPROCESS=No with FILE device class should be red');
+
+  // FILEPROCESS=No, non-FILE class, DBV backups present → red
+  const fpNoDbv = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  fpNoDbv.imported['hc_02_db_backups.csv'] = importedFromObjects({ 'hc_02_db_backups.csv': [{ TYPE:'BACKUPFULL', DATE_TIME:'2026-07-15T06:00:00Z', VOLUME_NAME:'SERVER.20260715.DBV' }] })['hc_02_db_backups.csv'];
+  const fpNoDbvReport = evaluateHealthcheckReport(fpNoDbv);
+  if (findHealthRule(fpNoDbvReport, 'fileprocess').status === 'RED') ok('Healthcheck: FILEPROCESS=No with .DBV backups is red');
+  else fail('Healthcheck: FILEPROCESS=No with .DBV backups should be red');
+
+  // FILEPROCESS blank → not tested
+  const fpBlank = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  fpBlank.imported['doc_34_drm_status.csv'] = importedFromObjects({ 'doc_34_drm_status.csv': [{ DBBEXPIREDAYS:'3', CHECKLABEL:'No', FILEPROCESS:'' }] })['doc_34_drm_status.csv'];
+  const fpBlankReport = evaluateHealthcheckReport(fpBlank);
+  if (findHealthRule(fpBlankReport, 'fileprocess').status === 'NOT_TESTED') ok('Healthcheck: blank FILEPROCESS is not tested');
+  else fail('Healthcheck: blank FILEPROCESS should be not tested');
+
+  // Missing doc_34_drm_status → not tested
+  const fpMissingDrm = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  delete fpMissingDrm.imported['doc_34_drm_status.csv'];
+  const fpMissingReport = evaluateHealthcheckReport(fpMissingDrm);
+  if (findHealthRule(fpMissingReport, 'fileprocess').status === 'NOT_TESTED') ok('Healthcheck: missing doc_34_drm_status is not tested for fileprocess');
+  else fail('Healthcheck: missing doc_34_drm_status should be not tested for fileprocess');
+}
+
+section('48. Nodes Defined / Unique informational rule');
+{
+  const base = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  const baseReport = evaluateHealthcheckReport(base);
+  const rule = findHealthRule(baseReport, 'nodes_defined_info');
+  if (rule.status === 'INFO') ok('Healthcheck: nodes_defined_info is informational when data present');
+  else fail('Healthcheck: nodes_defined_info should be INFO when data present');
+  if (rule.values && rule.values.some(v => v.label === 'Total nodes' && v.value === '2')) ok('Healthcheck: nodes_defined_info total node count is correct');
+  else fail('Healthcheck: nodes_defined_info total node count incorrect');
+  if (rule.values && rule.values.some(v => v.label === 'Unique TCP addresses (non-blank)' && v.value === '2')) ok('Healthcheck: nodes_defined_info unique address count is correct');
+  else fail('Healthcheck: nodes_defined_info unique address count incorrect');
+
+  // Duplicate addresses: 2 nodes, same TCP_ADDRESS → 1 unique
+  const dupAddr = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  dupAddr.imported['doc_07_nodes.csv'] = importedFromObjects({ 'doc_07_nodes.csv': [
+    { NODE_NAME:'NODE1', TCP_ADDRESS:'10.0.0.1' },
+    { NODE_NAME:'NODE2', TCP_ADDRESS:'10.0.0.1' },
+  ]})['doc_07_nodes.csv'];
+  const dupAddrReport = evaluateHealthcheckReport(dupAddr);
+  const dupAddrRule = findHealthRule(dupAddrReport, 'nodes_defined_info');
+  if (dupAddrRule.values && dupAddrRule.values.some(v => v.label === 'Total nodes' && v.value === '2')) ok('Healthcheck: duplicate-address fixture shows 2 total nodes');
+  else fail('Healthcheck: duplicate-address fixture total node count wrong');
+  if (dupAddrRule.values && dupAddrRule.values.some(v => v.label === 'Unique TCP addresses (non-blank)' && v.value === '1')) ok('Healthcheck: duplicate TCP addresses yield unique count of 1');
+  else fail('Healthcheck: duplicate TCP addresses should yield unique count of 1');
+
+  // Blank/null addresses: excluded from unique count
+  const nullAddr = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  nullAddr.imported['doc_07_nodes.csv'] = importedFromObjects({ 'doc_07_nodes.csv': [
+    { NODE_NAME:'NODE1', TCP_ADDRESS:'10.0.0.1' },
+    { NODE_NAME:'NODE2', TCP_ADDRESS:'' },
+    { NODE_NAME:'NODE3', TCP_ADDRESS:'' },
+  ]})['doc_07_nodes.csv'];
+  const nullAddrReport = evaluateHealthcheckReport(nullAddr);
+  const nullAddrRule = findHealthRule(nullAddrReport, 'nodes_defined_info');
+  if (nullAddrRule.values && nullAddrRule.values.some(v => v.label === 'Total nodes' && v.value === '3')) ok('Healthcheck: null-address fixture shows 3 total nodes');
+  else fail('Healthcheck: null-address fixture total node count wrong');
+  if (nullAddrRule.values && nullAddrRule.values.some(v => v.label === 'Unique TCP addresses (non-blank)' && v.value === '1')) ok('Healthcheck: blank addresses excluded from unique TCP count');
+  else fail('Healthcheck: blank addresses should be excluded from unique TCP count');
+
+  // Missing doc_07_nodes → not tested
+  const missingNodes = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  delete missingNodes.imported['doc_07_nodes.csv'];
+  const missingNodesReport = evaluateHealthcheckReport(missingNodes);
+  if (findHealthRule(missingNodesReport, 'nodes_defined_info').status === 'NOT_TESTED') ok('Healthcheck: missing doc_07_nodes is not tested for nodes_defined_info');
+  else fail('Healthcheck: missing doc_07_nodes should be not tested for nodes_defined_info');
+}
+
+section('49. Scratch tape warnings rule');
+{
+  // Zero warnings → INFO, no management summary bullet
+  const zeroWarn = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  const zeroWarnReport = evaluateHealthcheckReport(zeroWarn);
+  const zeroRule = findHealthRule(zeroWarnReport, 'scratch_tape_warnings');
+  if (zeroRule.status === 'INFO') ok('Healthcheck: zero scratch-tape warnings is INFO');
+  else fail('Healthcheck: zero scratch-tape warnings should be INFO');
+  if (zeroRule.recommendation && /no warnings/i.test(zeroRule.recommendation)) ok('Healthcheck: zero-warning recommendation mentions no warnings');
+  else fail('Healthcheck: zero-warning recommendation should mention no warnings');
+  if (!zeroRule.summaryBullet) ok('Healthcheck: zero scratch-tape warnings does not add management summary bullet');
+  else fail('Healthcheck: zero scratch-tape warnings should not add management summary bullet');
+
+  // Positive count → INFO with management summary
+  const posWarn = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  posWarn.imported['hc_35_scratch_warnings.csv'] = importedFromObjects({ 'hc_35_scratch_warnings.csv': [
+    { MSGNO:'692', WARNING_COUNT:'3' },
+    { MSGNO:'1403', WARNING_COUNT:'2' },
+  ]})['hc_35_scratch_warnings.csv'];
+  const posWarnReport = evaluateHealthcheckReport(posWarn);
+  const posRule = findHealthRule(posWarnReport, 'scratch_tape_warnings');
+  if (posRule.status === 'INFO') ok('Healthcheck: positive scratch-tape warnings remains INFO (not RED/AMBER)');
+  else fail('Healthcheck: positive scratch-tape warnings should remain INFO');
+  if (posRule.recommendation && /5\s+warnings/i.test(posRule.recommendation)) ok('Healthcheck: positive warning count (5) appears in recommendation');
+  else fail('Healthcheck: positive warning count should appear in recommendation');
+  if (posRule.summaryBullet) ok('Healthcheck: positive scratch-tape warnings adds management summary bullet');
+  else fail('Healthcheck: positive scratch-tape warnings should add management summary bullet');
+
+  // Scratch warnings do not change traffic light to AMBER/RED
+  const scratchOnlyState = makeHealthState(importedFromObjects({ 'hc_35_scratch_warnings.csv': [{ MSGNO:'692', WARNING_COUNT:'99' }] }));
+  const scratchOnlyReport = evaluateHealthcheckReport(scratchOnlyState);
+  if (scratchOnlyReport.overall === 'NOT_TESTED' || scratchOnlyReport.overall === 'GREEN') ok('Healthcheck: scratch-tape warnings alone do not produce AMBER/RED overall');
+  else fail('Healthcheck: scratch-tape warnings should not change traffic light to AMBER/RED');
+
+  // Missing hc_35_scratch_warnings → not tested
+  const missingScratch = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  delete missingScratch.imported['hc_35_scratch_warnings.csv'];
+  const missingScratchReport = evaluateHealthcheckReport(missingScratch);
+  if (findHealthRule(missingScratchReport, 'scratch_tape_warnings').status === 'NOT_TESTED') ok('Healthcheck: missing hc_35_scratch_warnings is not tested');
+  else fail('Healthcheck: missing hc_35_scratch_warnings should be not tested');
+
+  // Nine zero-padded MSGNOs appear in wording
+  if (/0692/.test(posRule.recommendation || '') && /1403/.test(posRule.recommendation || '')) ok('Healthcheck: scratch warnings recommendation cites zero-padded MSGNOs');
+  else fail('Healthcheck: scratch warnings recommendation should cite zero-padded MSGNOs');
+}
+
+section('50. Tape mount utilisation rule');
+{
+  // Baseline (< 50%) → INFO, good utilisation
+  const base = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  const baseReport = evaluateHealthcheckReport(base);
+  const baseRule = findHealthRule(baseReport, 'tape_mounts_info');
+  if (baseRule.status === 'INFO') ok('Healthcheck: tape mount utilisation is INFO');
+  else fail('Healthcheck: tape mount utilisation should be INFO');
+  if (baseRule.recommendation && /good/i.test(baseRule.recommendation)) ok('Healthcheck: low utilisation recommendation says good');
+  else fail('Healthcheck: low utilisation recommendation should say good');
+
+  // Exactly 0% (zero minutes)
+  const zeroMin = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  zeroMin.imported['hc_36_tape_mounts.csv'] = importedFromObjects({ 'hc_36_tape_mounts.csv': [{ DRIVE_COUNT:'4', TOTAL_MOUNT_MINUTES:'0', WINDOW_HOURS:'168' }] })['hc_36_tape_mounts.csv'];
+  const zeroMinReport = evaluateHealthcheckReport(zeroMin);
+  if (findHealthRule(zeroMinReport, 'tape_mounts_info').status === 'INFO') ok('Healthcheck: 0% tape utilisation is INFO');
+  else fail('Healthcheck: 0% tape utilisation should be INFO');
+
+  // 49% utilisation (4 drives × 10080 × 0.49 ≈ 19756.8 minutes)
+  const p49 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  p49.imported['hc_36_tape_mounts.csv'] = importedFromObjects({ 'hc_36_tape_mounts.csv': [{ DRIVE_COUNT:'4', TOTAL_MOUNT_MINUTES:'19756', WINDOW_HOURS:'168' }] })['hc_36_tape_mounts.csv'];
+  const p49Report = evaluateHealthcheckReport(p49);
+  const p49Rule = findHealthRule(p49Report, 'tape_mounts_info');
+  if (p49Rule.recommendation && /good/i.test(p49Rule.recommendation)) ok('Healthcheck: 49% tape utilisation (good, <50%)');
+  else fail('Healthcheck: 49% utilisation should say good');
+
+  // 50% utilisation (4 × 10080 × 0.5 = 20160 minutes)
+  const p50 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  p50.imported['hc_36_tape_mounts.csv'] = importedFromObjects({ 'hc_36_tape_mounts.csv': [{ DRIVE_COUNT:'4', TOTAL_MOUNT_MINUTES:'20160', WINDOW_HOURS:'168' }] })['hc_36_tape_mounts.csv'];
+  const p50Report = evaluateHealthcheckReport(p50);
+  const p50Rule = findHealthRule(p50Report, 'tape_mounts_info');
+  if (p50Rule.recommendation && /high/i.test(p50Rule.recommendation) && !/extremely/i.test(p50Rule.recommendation)) ok('Healthcheck: 50% tape utilisation is high (>=50% <75%)');
+  else fail('Healthcheck: 50% utilisation should say high (not extremely high)');
+  if (p50Rule.summaryBullet) ok('Healthcheck: 50% utilisation adds management summary bullet');
+  else fail('Healthcheck: 50% utilisation should add management summary bullet');
+
+  // 74% utilisation (4 × 10080 × 0.74 = 29836.8 → int = 29836)
+  const p74 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  p74.imported['hc_36_tape_mounts.csv'] = importedFromObjects({ 'hc_36_tape_mounts.csv': [{ DRIVE_COUNT:'4', TOTAL_MOUNT_MINUTES:'29836', WINDOW_HOURS:'168' }] })['hc_36_tape_mounts.csv'];
+  const p74Report = evaluateHealthcheckReport(p74);
+  const p74Rule = findHealthRule(p74Report, 'tape_mounts_info');
+  if (p74Rule.recommendation && /high/i.test(p74Rule.recommendation) && !/extremely/i.test(p74Rule.recommendation)) ok('Healthcheck: 74% tape utilisation is high (>=50% <75%)');
+  else fail('Healthcheck: 74% utilisation should say high');
+
+  // 75% utilisation (4 × 10080 × 0.75 = 30240)
+  const p75 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  p75.imported['hc_36_tape_mounts.csv'] = importedFromObjects({ 'hc_36_tape_mounts.csv': [{ DRIVE_COUNT:'4', TOTAL_MOUNT_MINUTES:'30240', WINDOW_HOURS:'168' }] })['hc_36_tape_mounts.csv'];
+  const p75Report = evaluateHealthcheckReport(p75);
+  const p75Rule = findHealthRule(p75Report, 'tape_mounts_info');
+  if (p75Rule.recommendation && /extremely high/i.test(p75Rule.recommendation)) ok('Healthcheck: 75% tape utilisation is extremely high');
+  else fail('Healthcheck: 75% utilisation should say extremely high');
+  if (p75Rule.summaryBullet) ok('Healthcheck: 75% utilisation adds management summary bullet');
+  else fail('Healthcheck: 75% utilisation should add management summary bullet');
+
+  // No drives → INFO, special message
+  const noDrives = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  noDrives.imported['hc_36_tape_mounts.csv'] = importedFromObjects({ 'hc_36_tape_mounts.csv': [{ DRIVE_COUNT:'0', TOTAL_MOUNT_MINUTES:'0', WINDOW_HOURS:'168' }] })['hc_36_tape_mounts.csv'];
+  const noDrivesReport = evaluateHealthcheckReport(noDrives);
+  const noDrivesRule = findHealthRule(noDrivesReport, 'tape_mounts_info');
+  if (noDrivesRule.status === 'INFO' && noDrivesRule.recommendation && /no drives/i.test(noDrivesRule.recommendation)) ok('Healthcheck: zero drives shows no-drives message');
+  else fail('Healthcheck: zero drives should show no-drives message as INFO');
+
+  // <= 2 drives → low-drive-count note appended
+  const lowDrives = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  lowDrives.imported['hc_36_tape_mounts.csv'] = importedFromObjects({ 'hc_36_tape_mounts.csv': [{ DRIVE_COUNT:'2', TOTAL_MOUNT_MINUTES:'100', WINDOW_HOURS:'168' }] })['hc_36_tape_mounts.csv'];
+  const lowDrivesReport = evaluateHealthcheckReport(lowDrives);
+  const lowDrivesRule = findHealthRule(lowDrivesReport, 'tape_mounts_info');
+  if (lowDrivesRule.recommendation && /low at 2/i.test(lowDrivesRule.recommendation)) ok('Healthcheck: 2 drives appends low-drive-count note');
+  else fail('Healthcheck: 2 drives should append low-drive-count note');
+
+  // Tape utilisation does not change traffic light to AMBER/RED
+  const tapeOnlyState = makeHealthState(importedFromObjects({ 'hc_36_tape_mounts.csv': [{ DRIVE_COUNT:'4', TOTAL_MOUNT_MINUTES:'30240', WINDOW_HOURS:'168' }] }));
+  const tapeOnlyReport = evaluateHealthcheckReport(tapeOnlyState);
+  if (tapeOnlyReport.overall === 'NOT_TESTED' || tapeOnlyReport.overall === 'GREEN') ok('Healthcheck: extremely-high tape utilisation alone does not produce AMBER/RED overall');
+  else fail('Healthcheck: tape utilisation should not change traffic light to AMBER/RED');
+
+  // Missing hc_36_tape_mounts → not tested
+  const missingMount = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  delete missingMount.imported['hc_36_tape_mounts.csv'];
+  const missingMountReport = evaluateHealthcheckReport(missingMount);
+  if (findHealthRule(missingMountReport, 'tape_mounts_info').status === 'NOT_TESTED') ok('Healthcheck: missing hc_36_tape_mounts is not tested');
+  else fail('Healthcheck: missing hc_36_tape_mounts should be not tested');
+}
+
+section('51. Old-archive backward compatibility (missing new fields)');
+{
+  // Old archive: doc_01_status without SCHEDMODE/SUMMARYRETENTION/EVENTRETENTION
+  const oldStatus = makeHealthState(importedFromObjects({
+    'doc_01_status.csv': [{ VERSION:'8', ACTLOGRETENTION:'30', LICENSECOMPLIANCE:'Valid', MAXSESSIONS:'300', MAXSCHEDSESSIONS:'240', ACCOUNTING:'ON', QUERYSCHEDPERIOD:'1' }],
+    'doc_34_drm_status.csv': [{ DBBEXPIREDAYS:'3', CHECKLABEL:'No' }],
+    'doc_07_nodes.csv': [{ NODE_NAME:'NODE1' }],
+  }));
+  const oldStatusReport = evaluateHealthcheckReport(oldStatus);
+  if (findHealthRule(oldStatusReport, 'schedmode').status === 'NOT_TESTED') ok('Backward compat: absent SCHEDMODE column gives NOT_TESTED');
+  else fail('Backward compat: absent SCHEDMODE should give NOT_TESTED');
+  if (findHealthRule(oldStatusReport, 'summary_retention').status === 'NOT_TESTED') ok('Backward compat: absent SUMMARYRETENTION column gives NOT_TESTED');
+  else fail('Backward compat: absent SUMMARYRETENTION should give NOT_TESTED');
+  if (findHealthRule(oldStatusReport, 'event_retention').status === 'NOT_TESTED') ok('Backward compat: absent EVENTRETENTION column gives NOT_TESTED');
+  else fail('Backward compat: absent EVENTRETENTION should give NOT_TESTED');
+  if (findHealthRule(oldStatusReport, 'fileprocess').status === 'NOT_TESTED') ok('Backward compat: absent FILEPROCESS column gives NOT_TESTED');
+  else fail('Backward compat: absent FILEPROCESS should give NOT_TESTED');
+  if (findHealthRule(oldStatusReport, 'nodes_defined_info').status === 'NOT_TESTED') ok('Backward compat: absent TCP_ADDRESS column gives NOT_TESTED for nodes_defined_info');
+  else fail('Backward compat: absent TCP_ADDRESS should give NOT_TESTED for nodes_defined_info');
+  if (findHealthRule(oldStatusReport, 'scratch_tape_warnings').status === 'NOT_TESTED') ok('Backward compat: absent hc_35_scratch_warnings gives NOT_TESTED');
+  else fail('Backward compat: absent hc_35_scratch_warnings should give NOT_TESTED');
+  if (findHealthRule(oldStatusReport, 'tape_mounts_info').status === 'NOT_TESTED') ok('Backward compat: absent hc_36_tape_mounts gives NOT_TESTED');
+  else fail('Backward compat: absent hc_36_tape_mounts should give NOT_TESTED');
+}
+
+section('52. Full good fixture baseline and HTML/DOCX report content');
+{
+  const good = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+  const goodReport = evaluateHealthcheckReport(good);
+  const allGreen = ['schedmode','summary_retention','event_retention','fileprocess','nodes_defined_info'].every(id => {
+    const r = findHealthRule(goodReport, id);
+    return r.status === 'GREEN' || r.status === 'INFO';
+  });
+  if (allGreen) ok('Full good fixture: all newly enabled rules are GREEN or INFO');
+  else fail('Full good fixture: some newly enabled rules are not GREEN or INFO');
+
+  const htmlOut = buildHealthcheckReportHtml(goodReport, 'blob:test');
+  if (/Schedule Mode/i.test(htmlOut)) ok('HTML report contains Schedule Mode rule');
+  else fail('HTML report missing Schedule Mode rule');
+  if (/Summary Log Retention/i.test(htmlOut)) ok('HTML report contains Summary Log Retention rule');
+  else fail('HTML report missing Summary Log Retention rule');
+  if (/Event Log Retention/i.test(htmlOut)) ok('HTML report contains Event Log Retention rule');
+  else fail('HTML report missing Event Log Retention rule');
+  if (/Process File DB Backups/i.test(htmlOut)) ok('HTML report contains Process File DB Backups rule');
+  else fail('HTML report missing Process File DB Backups rule');
+  if (/Nodes Defined/i.test(htmlOut)) ok('HTML report contains Nodes Defined / Unique rule');
+  else fail('HTML report missing Nodes Defined / Unique rule');
+  if (/Scratch Tape Warnings/i.test(htmlOut)) ok('HTML report contains Scratch Tape Warnings rule');
+  else fail('HTML report missing Scratch Tape Warnings rule');
+  if (/Tape Mount Utilisation/i.test(htmlOut)) ok('HTML report contains Tape Mount Utilisation rule');
+  else fail('HTML report missing Tape Mount Utilisation rule');
+
+  // Should not say "Insufficient Data" for the now-enabled rules
+  if (!htmlOut.includes('FILEPROCESS, which the Perl rule requires')) ok('HTML report no longer shows old fileprocess insufficient-data text');
+  else fail('HTML report still showing old fileprocess insufficient-data text');
+  if (!htmlOut.includes('does not include STATUS.SCHEDMODE')) ok('HTML report no longer shows old schedmode insufficient-data text');
+  else fail('HTML report still showing old schedmode insufficient-data text');
+
+  const docxBytes = buildHealthcheckDocxBytes(goodReport);
+  const entries = parseStoredZipEntries(docxBytes);
+  const docXml = entries.get('word/document.xml') || '';
+  if (/Schedule Mode/i.test(docXml)) ok('DOCX report contains Schedule Mode rule');
+  else fail('DOCX report missing Schedule Mode rule');
+  if (/Summary Log Retention/i.test(docXml)) ok('DOCX report contains Summary Log Retention rule');
+  else fail('DOCX report missing Summary Log Retention rule');
+  if (/Nodes Defined/i.test(docXml)) ok('DOCX report contains Nodes Defined / Unique rule');
+  else fail('DOCX report missing Nodes Defined / Unique rule');
+}
+
+section('53. Archive import maps new fields correctly');
+{
+  const parsedState = buildImportedState({
+    'doc_01_status.csv': 'SERVER_NAME,ACTLOGRETENTION,SCHEDMODE,SUMMARYRETENTION,EVENTRETENTION\nSRV1,30,POLLING,30,30',
+    'doc_34_drm_status.csv': 'PLANPREFIX,INSTRPREFIX,NONMOUNTNAME,COURIERNAME,VAULTNAME,DBBEXPIREDAYS,CHECKLABEL,FILEPROCESS\n,,,,,3,No,Yes',
+    'doc_07_nodes.csv': 'NODE_NAME,TCP_ADDRESS\nNODE1,10.0.0.1',
+    'hc_35_scratch_warnings.csv': 'MSGNO,WARNING_COUNT\n692,5',
+    'hc_36_tape_mounts.csv': 'DRIVE_COUNT,TOTAL_MOUNT_MINUTES,WINDOW_HOURS\n4,1000,168',
+  });
+
+  const statusImported = parsedState['doc_01_status.csv'];
+  if (statusImported && statusImported.headers.includes('SCHEDMODE')) ok('Import: doc_01_status includes SCHEDMODE header');
+  else fail('Import: doc_01_status missing SCHEDMODE header');
+  if (statusImported && statusImported.headers.includes('SUMMARYRETENTION')) ok('Import: doc_01_status includes SUMMARYRETENTION header');
+  else fail('Import: doc_01_status missing SUMMARYRETENTION header');
+  if (statusImported && statusImported.headers.includes('EVENTRETENTION')) ok('Import: doc_01_status includes EVENTRETENTION header');
+  else fail('Import: doc_01_status missing EVENTRETENTION header');
+
+  const drmImported = parsedState['doc_34_drm_status.csv'];
+  if (drmImported && drmImported.headers.includes('FILEPROCESS')) ok('Import: doc_34_drm_status includes FILEPROCESS header');
+  else fail('Import: doc_34_drm_status missing FILEPROCESS header');
+  if (drmImported && drmImported.rows[0] && drmImported.rows[0][drmImported.headers.indexOf('FILEPROCESS')] === 'Yes') ok('Import: doc_34_drm_status FILEPROCESS value is correct');
+  else fail('Import: doc_34_drm_status FILEPROCESS value incorrect');
+
+  const nodeImported = parsedState['doc_07_nodes.csv'];
+  if (nodeImported && nodeImported.headers.includes('TCP_ADDRESS')) ok('Import: doc_07_nodes includes TCP_ADDRESS header');
+  else fail('Import: doc_07_nodes missing TCP_ADDRESS header');
+
+  const scratchImported = parsedState['hc_35_scratch_warnings.csv'];
+  if (scratchImported && scratchImported.headers.includes('MSGNO') && scratchImported.headers.includes('WARNING_COUNT')) ok('Import: hc_35_scratch_warnings has correct headers');
+  else fail('Import: hc_35_scratch_warnings missing expected headers');
+  if (scratchImported && scratchImported.rows.length === 1) ok('Import: hc_35_scratch_warnings has 1 data row');
+  else fail('Import: hc_35_scratch_warnings row count unexpected');
+
+  const mountImported = parsedState['hc_36_tape_mounts.csv'];
+  if (mountImported && mountImported.headers.includes('DRIVE_COUNT') && mountImported.headers.includes('TOTAL_MOUNT_MINUTES')) ok('Import: hc_36_tape_mounts has correct headers');
+  else fail('Import: hc_36_tape_mounts missing expected headers');
+}
 if (FAIL > 0) {
   console.error('VALIDATION FAILED');
   process.exit(1);
