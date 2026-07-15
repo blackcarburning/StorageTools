@@ -1739,7 +1739,6 @@ section('35. Healthcheck deterministic evaluator boundaries');
   else fail('Healthcheck: DB utilisation at 80 should be red');
 
   const max99 = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
-  max99.imported['doc_01_status.csv'].rows[0][2] = max99.imported['doc_01_status.csv'].rows[0][2];
   max99.imported['doc_01_status.csv'] = importedFromObjects({
     'doc_01_status.csv': [{
       VERSION: '8', RELEASE: '1', LEVEL: '27', SUBLEVEL: '0',

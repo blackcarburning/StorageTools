@@ -3846,8 +3846,8 @@ const HEALTHCHECK_RULES = [
       const offline = (ctx.rows('doc_24_paths.csv') || []).filter(row => String(ctx.getField(row, 'ONLINE')).toUpperCase() === 'NO').length;
       const values = [{ label:'SCSI/VTL libraries', value:String(libraries) }, { label:'Offline paths', value:String(offline) }];
       if (libraries === 0) return makeRuleResult(rule, 'GREEN', values, 'There are no locally controlled libraries and therefore no paths.', 'There are no locally controlled libraries and therefore no paths.');
-      if (offline === 1) return makeRuleResult(rule, 'RED', values, 'There is 1 path offline.', 'There is 1 path offline!', { summaryBullet:'There is 1 drive offline. Check for drive, library or SAN issues.' });
-      if (offline > 1) return makeRuleResult(rule, 'RED', values, `There are ${offline} paths offline.`, `Warning: There are ${offline} paths offline.`, { summaryBullet:`There are ${offline} drives offline . Check for drive, library or SAN issues.` });
+      if (offline === 1) return makeRuleResult(rule, 'RED', values, 'There is 1 path offline.', 'There is 1 path offline!', { summaryBullet:'There is 1 path offline. Check for drive, library or SAN issues.' });
+      if (offline > 1) return makeRuleResult(rule, 'RED', values, `There are ${offline} paths offline.`, `Warning: There are ${offline} paths offline.`, { summaryBullet:`There are ${offline} paths offline. Check for drive, library or SAN issues.` });
       return makeRuleResult(rule, 'GREEN', values, 'All paths are online.', 'All paths are online. There may still be drives offline so check the previous section.');
     }
   },
