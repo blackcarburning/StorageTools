@@ -1,6 +1,6 @@
 # StorageTools Web Helper — IBM Storage Protect v8 Report Helper
 
-A self-contained, **no-install** browser application that generates one complete IBM Storage Protect `dsmadmc` collection script, packages all results into a single portable `.tar` archive, and builds one coloured multi-sheet XLSX workbook from that archive.
+A self-contained, **no-install** browser application that generates one complete IBM Storage Protect `dsmadmc` collection script, packages all results into a single portable `.tar` archive, builds one coloured multi-sheet XLSX workbook from that archive, and can run an offline traffic-light healthcheck analysis from the imported collection data.
 
 ---
 
@@ -11,7 +11,7 @@ A self-contained, **no-install** browser application that generates one complete
 | Browser   | Any modern browser (Chrome, Edge, Firefox). No server needed — open `index.html` directly. |
 | Windows host (optional) | `dsmadmc.exe` from the IBM Storage Protect administrative client package for `.cmd` scripts; `tar.exe` (included with Windows 10 1803+ and Windows Server 2019+). |
 | Unix/Linux host (optional) | `dsmadmc` administrative client binary for `.sh` scripts (for example `/opt/tivoli/tsm/client/ba/bin/dsmadmc`); `tar` (standard on all POSIX systems). |
-| XLSX export | Built into `index.html` as a self-contained exporter; no CDN, installation, or companion files required. |
+| XLSX / DOCX export | Built into `index.html` as self-contained exporters; no CDN, installation, or companion files required. |
 
 ---
 
@@ -72,7 +72,27 @@ Drag-and-drop or select the **single `.tar` collection archive** produced by the
 
 > **Compatibility fallback:** individual `.csv` files may also be selected if you have a collection from an older script version.
 
-### Step 6 — Download the complete workbook (Report tab)
+### Step 6 — Run Healthcheck Analysis (Healthcheck Analysis tab)
+After importing the unified `.tar` archive, open **Healthcheck Analysis** and click **Run / Generate Traffic Light Report**.
+
+The healthcheck engine:
+- evaluates the already imported archive data locally in the browser; it does **not** reconnect to IBM Storage Protect
+- follows the Perl traffic-light rules from `HELIX_TRAFFIC_LIGHT_compiled_v14.pl` as closely as the imported datasets allow
+- preserves missing-data behavior by marking unavailable-source checks as **Not Tested / Insufficient Data** instead of silently treating them as healthy
+- shows per-rule status, source values, threshold/rationale, findings, and recommendations grouped by healthcheck section
+- atomically replaces prior healthcheck results when you import a new archive or rerun the analysis
+
+The completed report opens in a **separate browser tab/window** and includes:
+- executive summary and overall traffic light
+- Red / Amber / Green / Informational / Not Tested counters
+- detailed findings by section
+- missing-data / insufficient-data items
+- collection metadata from the imported archive
+- optional AI-assisted narrative analysis appended after the deterministic traffic-light report
+
+You can also download the same report as a `.docx` file from the Healthcheck tab or from the opened report tab.
+
+### Step 7 — Download the complete workbook (Report tab)
 Enter optional report metadata (Customer, Prepared by, Report date, Server label) and click **Download Complete XLSX Report**.
 You will be prompted to confirm/edit the final `.xlsx` filename before download.
 
@@ -104,6 +124,72 @@ The real-server schema-backed advanced queries use the confirmed table names:
 - retention helper views surfaced via schema discovery such as `RETSETCONTENTS`, `RETSET_MEMBERS`, `RETSET_VOLUMES`, `RETRULE_MEMBERS`, `HOLDS`, `HELDRETSETS`, and `RETMEDIA`
 
 Optional feature views can still warn on older or differently licensed servers. Confirmed views on the attached schema are queried with their exact names and should not return `RC_NOTABLE` on that server family.
+
+---
+
+## Healthcheck Analysis Notes
+
+### Perl-rule parity and exclusions
+
+`HELIX_TRAFFIC_LIGHT_compiled_v14.pl` in the repository root is the authoritative rule source. The web helper ports the rule ordering, thresholds, status wording, and recommendations into browser-side JavaScript so the analysis can run against the imported archive contents.
+
+Some Perl checks depend on source fields or time windows that are **not** present in the current archive format. Those checks are intentionally reported as **Not Tested / Insufficient Data** with the missing source identified, rather than being approximated. This is expected behavior and is preferable to a false Green result.
+
+### Deterministic local analysis
+
+When **Include OpenAI analysis** is **unchecked**:
+- the browser generates only the deterministic traffic-light report
+- no OpenAI network request is made
+- the report remains fully offline and reproducible from the same archive input
+
+### Optional OpenAI analysis
+
+The Healthcheck tab contains a collapsible **AI analysis** area with:
+- a masked OpenAI API key field
+- a model refresh action that queries `GET /v1/models`
+- a filtered model selector for text/reasoning models
+- a custom model ID field for account-specific or newly released model IDs
+- an **Include OpenAI analysis** checkbox
+
+If AI analysis is enabled, StorageTools first builds the complete deterministic report locally, then sends a **structured summary of the report findings** to the OpenAI Responses API to request a narrative analysis. The app does **not** upload the `.tar` archive itself, your IBM credentials, or unrelated collection files.
+
+The AI section is appended after the traffic-light report and is clearly labelled with the model ID and generation timestamp. Treat the AI narrative as advisory output that should be reviewed by a qualified IBM Storage Protect administrator.
+
+### Strong API-key warning
+
+OpenAI recommends keeping API keys server-side. This app is intentionally self-contained and has **no backend**, so client-side API-key use is available only as an explicit advanced option.
+
+Because of that:
+- only use the AI feature on a **trusted local device**
+- do **not** use it on shared or untrusted machines
+- the API key is **memory-only**
+- the API key is **not** written to localStorage, sessionStorage, the URL, the archive, the generated report, or the exported DOCX
+- the API key is cleared when the page reloads
+
+Enabling AI analysis may send report content to OpenAI and may incur API charges on your account.
+
+### Model selection
+
+- StorageTools first tries the live `GET /v1/models` list for the entered API key.
+- If that request fails, the UI falls back to a curated list of compatible Responses API text/reasoning models.
+- Image/audio/video/embedding/moderation-only models are excluded from the normal selector.
+- If a model you need is not listed, enter its exact API identifier in the custom model field.
+- Model availability is controlled by OpenAI and your account permissions; a friendly API error is shown if a chosen model is unavailable.
+
+### Separate-tab report and DOCX export
+
+- The report window is opened synchronously from the Run button to avoid popup blockers where possible.
+- The HTML report uses escaped text and embedded styling only; no external resources are loaded.
+- The DOCX export contains the same deterministic traffic-light content, with optional AI analysis appended afterward when enabled.
+
+### Manual verification notes
+
+For manual browser testing:
+1. Import a real unified `.tar` archive.
+2. Run the Healthcheck report once with AI disabled and confirm no network call is made.
+3. Confirm the report opens in a new tab/window and that **Print / Save as PDF** works from that tab.
+4. Download the `.docx` report and open it in Word or LibreOffice.
+5. If desired, enter a real OpenAI API key on a trusted machine, refresh models, enable AI analysis, and confirm the AI section is appended after the deterministic findings.
 
 ---
 
@@ -165,6 +251,13 @@ Server date/time: 13/07/26   17:12:14  Last access: 13/07/26   17:12:14
 
 StorageTools automatically filters these banner lines before header detection and data parsing. Filtering is case-insensitive and tolerant of whitespace, quoting, BOM/control-character prefixes, and version-number changes. If the server emits a trustworthy header row, StorageTools keeps it. If the output contains only data rows, StorageTools falls back to deterministic column headers derived from the query `SELECT` list and schema metadata for `SELECT *` queries such as `DBSPACE`. Empty-result sheets still retain their expected column headings. Known no-match responses such as `ANR2034E SELECT: No match found using this criteria.` are also normalized as empty results (without writing raw IBM error text into worksheet data cells).
 
+### Healthcheck popup blockers, unavailable models, and API errors
+
+- If the Healthcheck report tab does not appear, allow popups for the local `index.html` page and run the analysis again.
+- If **Refresh models** fails, confirm the API key is valid and has access to OpenAI models. The UI will keep a fallback list available, and you can also enter a custom model ID manually.
+- If AI analysis fails because of authentication, rate limiting, or model access, the deterministic healthcheck report is still kept and shown; the AI failure is reported separately.
+- If lower-priority findings must be truncated before sending them to OpenAI, all Red and Amber findings are preserved first and the report notes that truncation occurred.
+
 ---
 
 ## Offline Usage
@@ -181,6 +274,7 @@ StorageTools automatically filters these banner lines before header detection an
 | `StorageTools_Complete_<SERVER>.sh` | Unix/Linux complete collection script (76 queries) |
 | `StorageTools_Complete_<SERVER>_<TIMESTAMP>.tar` | Single portable archive: all CSV results + `collection_log.txt` + `collection_errors.log` + `manifest.txt` |
 | `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Unified workbook including Collection_Log and Collection_Errors sheets |
+| `StorageTools_Healthcheck_Report_<CUSTOMER>_<SERVER>_<DATE>.docx` | Traffic-light healthcheck report exported from the imported archive, with optional AI-assisted analysis appended |
 
 Individual CSV files and logs are packaged into the `.tar` archive and removed on success. The `.tar` archive is the only collection artifact that should remain after a successful run.
 
