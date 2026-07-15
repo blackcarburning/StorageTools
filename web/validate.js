@@ -353,7 +353,7 @@ if (!sh.includes('rm -rf "$OUTDIR"')) ok('SH does not delete configured output d
 else fail('SH must not delete configured output directory');
 if (!sh.includes('OUTPARENT=')) ok('SH no longer writes archive to output parent directory');
 else fail('SH still references output parent directory');
-if (!/OUTDIR=['"]?\/tmp/.test(sh)) ok('SH has no /tmp output directory fallback');
+if (!/OUTDIR(?:_RAW)?=['"]?\/tmp/.test(sh)) ok('SH has no /tmp output directory fallback');
 else fail('SH should not default output directory to /tmp');
 if (/StorageTools_Complete_/.test(sh)) ok('SH archive filename follows StorageTools_Complete_ prefix');
 else fail('SH archive filename missing StorageTools_Complete_ prefix');
@@ -406,6 +406,10 @@ section('14. Output-directory resolution and safety');
     elUnix.value = 'nested/relative out';
     const cmdRelative = generateCmdContent();
     const shRelative = generateShContent();
+    if (cmdRelative.includes('SET "OUTDIR_RAW=nested\\relative out"')) ok('CMD keeps spaced relative output path in quoted assignment');
+    else fail('CMD should preserve spaced relative output path');
+    if (shRelative.includes("OUTDIR_RAW='nested/relative out'")) ok('SH keeps spaced relative output path shell-quoted');
+    else fail('SH should preserve spaced relative output path');
     if (cmdRelative.includes('SET "OUTDIR=%LAUNCH_DIR%\\%OUTDIR_RAW%"')) ok('CMD resolves relative output paths from launch directory');
     else fail('CMD missing launch-directory relative output resolution');
     if (shRelative.includes('*) OUTDIR="$LAUNCH_DIR/$OUTDIR_RAW" ;;')) ok('SH resolves relative output paths from launch directory');
@@ -420,6 +424,8 @@ section('14. Output-directory resolution and safety');
     const cmdUnc = generateCmdContent();
     if (cmdUnc.includes('SET "OUTDIR_RAW=\\\\server\\share\\out folder"')) ok('CMD UNC output path remains absolute');
     else fail('CMD UNC output path handling missing');
+    if (cmdUnc.includes('IF NOT "%OUTDIR_RAW:~1,1%"==":" IF NOT "%OUTDIR_RAW:~0,2%"=="\\\\" SET "OUTDIR=%LAUNCH_DIR%\\%OUTDIR_RAW%"')) ok('CMD UNC path remains protected by absolute-path check');
+    else fail('CMD UNC absolute-path check missing');
 
     elUnix.value = '/var/tmp/storage tools/out';
     const shAbsolute = generateShContent();

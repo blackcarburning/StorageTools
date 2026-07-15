@@ -1191,7 +1191,7 @@ function generateCmdContent() {
   lines.push('IF NOT "%OPTFILE%"=="" SET OPTARG=-optfile="%OPTFILE%"');
   lines.push('');
   lines.push('IF NOT EXIST "%OUTDIR%" MKDIR "%OUTDIR%"');
-  lines.push('SET "WORKDIR=%OUTDIR%\\.work_%RANDOM%_%RANDOM%"');
+  lines.push('SET "WORKDIR=%OUTDIR%\\.work_%RANDOM%_%RANDOM%_%TIME:~6,2%"');
   lines.push('IF NOT EXIST "%WORKDIR%" MKDIR "%WORKDIR%"');
   lines.push('IF NOT EXIST "%WORKDIR%" (');
   lines.push('  echo [FATAL] Unable to create working directory: %WORKDIR% 1>&2');
