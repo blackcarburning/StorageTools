@@ -4378,6 +4378,8 @@ function sanitizeHealthcheckUserText(text) {
 
 function formatHealthcheckTimestamp(value) {
   if (!value) return '—';
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isNaN(date.getTime())) return `${date.toISOString()} (UTC)`;
   return `${String(value)} (UTC)`;
 }
 
@@ -4418,7 +4420,6 @@ function getHealthcheckReportSignature(report) {
     ai.model,
     ai.requestedAt,
     ai.generatedAt,
-    ai.error,
     ai.text,
     ai.promptTruncated ? 'truncated' : 'full'
   ].join('::');
@@ -5218,7 +5219,7 @@ function openHealthcheckReportWindow(includeAi, modelId) {
 }
 
 async function runHealthcheckAnalysis() {
-  const includeAi = !!((document.getElementById('healthcheckIncludeAi') || {}).checked);
+  const includeAi = Boolean((document.getElementById('healthcheckIncludeAi') || {}).checked);
   const selectedModelId = includeAi ? getSelectedHealthcheckModelId() : '';
   const popup = openHealthcheckReportWindow(includeAi, selectedModelId);
   if (!popup) {

@@ -51,7 +51,7 @@ let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatS
     HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes,
     filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload,
     requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename,
-    refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, __elements;
+    refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml, __elements;
 try {
   const elements = new Map();
   const makeEl = (value = '') => ({
@@ -127,7 +127,7 @@ try {
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
     'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES, HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes, filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload, requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename, refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, __elements: document.__elements };`
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES, HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes, filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload, requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename, refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml, __elements: document.__elements };`
   );
   const result = sandbox(
     mockDoc,
@@ -150,7 +150,7 @@ try {
      HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes,
      filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload,
      requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename,
-     refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, __elements } = result);
+     refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml, __elements } = result);
 } catch (err) {
   fail(`Could not evaluate index.html script: ${err.message}`);
   process.exit(1);
@@ -1962,7 +1962,21 @@ section('38. Healthcheck AI request, checkbox guard, and key hygiene');
   else fail('Healthcheck: failed AI output leaked secrets or authorization headers');
 }
 
-section('39. Healthcheck separate-tab HTML states, escaping, and ordering');
+section('39. Healthcheck report shell and pending export state');
+{
+  const shellHtml = buildHealthcheckReportShellHtml({
+    customer: '<Customer>',
+    preparedBy: 'Admin',
+    reportDate: '2026-07-15',
+    server: 'SRV1'
+  }, true, 'gpt-5.6-sol');
+  if (shellHtml.includes('Preparing deterministic traffic-light analysis') && shellHtml.includes('AI-assisted evaluation:</strong> Generating') && shellHtml.includes('&lt;Customer&gt;') && shellHtml.includes('gpt-5.6-sol')) ok('Healthcheck report shell renders escaped metadata and initial generating state');
+  else fail('Healthcheck report shell missing escaped metadata or generating state');
+  if (shellHtml.includes('DOCX available after report generation')) ok('Healthcheck report shell marks DOCX export unavailable before completion');
+  else fail('Healthcheck report shell missing pending DOCX marker');
+}
+
+section('40. Healthcheck separate-tab HTML states, escaping, and ordering');
 {
   const report = evaluateHealthcheckReport(makeHealthState(clone(HEALTH_FIXTURE_GOOD)));
   report.results[0].finding = '<script>alert(1)</script>';
@@ -1992,7 +2006,7 @@ section('39. Healthcheck separate-tab HTML states, escaping, and ordering');
   else fail('Healthcheck: separate-tab HTML did not escape imported/model text');
   if (htmlOut.indexOf('AI-assisted healthcheck evaluation') < htmlOut.indexOf('Detailed findings by section')) ok('Healthcheck HTML places AI section near the beginning before detailed findings');
   else fail('Healthcheck HTML AI section ordering incorrect');
-  if (htmlOut.includes('AI-assisted evaluation:</strong> Included') && htmlOut.includes('gpt-4.1') && htmlOut.includes('2026-07-15T12:34:56Z (UTC)') && /reviewed by a qualified administrator/i.test(htmlOut) && /truncated after preserving all red and amber/i.test(htmlOut)) ok('Healthcheck HTML included state shows model, timestamp, narrative metadata, and disclaimer');
+  if (htmlOut.includes('AI-assisted evaluation:</strong> Included') && htmlOut.includes('gpt-4.1') && /2026-07-15T12:34:56(?:\.000)?Z \(UTC\)/.test(htmlOut) && /reviewed by a qualified administrator/i.test(htmlOut) && /truncated after preserving all red and amber/i.test(htmlOut)) ok('Healthcheck HTML included state shows model, timestamp, narrative metadata, and disclaimer');
   else fail('Healthcheck HTML included state missing model/timestamp/disclaimer metadata');
   if (!/Perl parity|perlRef|HELIX get_the_variables/i.test(htmlOut)) ok('Healthcheck HTML excludes user-facing Perl parity/source text');
   else fail('Healthcheck HTML still exposes Perl parity/source text');
@@ -2010,7 +2024,7 @@ section('39. Healthcheck separate-tab HTML states, escaping, and ordering');
   report.aiAnalysis = null;
   report.aiGeneratedAt = '';
   const failedHtml = buildHealthcheckReportHtml(report, 'blob:test');
-  if (failedHtml.includes('AI-assisted evaluation:</strong> Failed') && failedHtml.includes('2026-07-15T12:35:00Z (UTC)') && /deterministic traffic-light report remains valid and complete/i.test(failedHtml) && !failedHtml.includes('sk-test-secret')) ok('Healthcheck HTML failed state preserves deterministic report and sanitizes errors');
+  if (failedHtml.includes('AI-assisted evaluation:</strong> Failed') && /2026-07-15T12:35:00(?:\.000)?Z \(UTC\)/.test(failedHtml) && /deterministic traffic-light report remains valid and complete/i.test(failedHtml) && !failedHtml.includes('sk-test-secret')) ok('Healthcheck HTML failed state preserves deterministic report and sanitizes errors');
   else fail('Healthcheck HTML failed state missing deterministic/sanitized failure details');
 
   report.aiState = 'GENERATING';
@@ -2021,7 +2035,7 @@ section('39. Healthcheck separate-tab HTML states, escaping, and ordering');
   else fail('Healthcheck tab DOCX export was not disabled while AI was pending');
 }
 
-section('40. Healthcheck DOCX structure, states, and AI ordering');
+section('41. Healthcheck DOCX structure, states, and AI ordering');
 {
   const report = evaluateHealthcheckReport(makeHealthState(clone(HEALTH_FIXTURE_GOOD)));
   report.aiState = 'INCLUDED';
@@ -2040,7 +2054,7 @@ section('40. Healthcheck DOCX structure, states, and AI ordering');
   else fail('Healthcheck DOCX missing report title');
   if (docXml.indexOf('AI-assisted healthcheck evaluation') < docXml.indexOf('Detailed findings by section')) ok('Healthcheck DOCX places AI section before deterministic findings');
   else fail('Healthcheck DOCX AI section ordering incorrect');
-  if (docXml.includes('AI-assisted evaluation: Included') && docXml.includes('&lt;gpt-4.1&gt;') && docXml.includes('&lt;2026-07-15T12:34:56Z&gt; (UTC)') && docXml.includes('AI follow-up &lt;tag&gt;') && /reviewed by a qualified administrator/i.test(docXml)) ok('Healthcheck DOCX included state shows escaped model/timestamp/narrative and disclaimer');
+  if (docXml.includes('AI-assisted evaluation: Included') && docXml.includes('&lt;gpt-4.1&gt;') && /&lt;2026-07-15T12:34:56(?:\.000)?Z&gt; \(UTC\)/.test(docXml) && docXml.includes('AI follow-up &lt;tag&gt;') && /reviewed by a qualified administrator/i.test(docXml)) ok('Healthcheck DOCX included state shows escaped model/timestamp/narrative and disclaimer');
   else fail('Healthcheck DOCX included state missing escaped model/timestamp/narrative metadata');
   if (!/Perl parity|perlRef|HELIX get_the_variables/i.test(docXml)) ok('Healthcheck DOCX excludes user-facing Perl parity/source text');
   else fail('Healthcheck DOCX still exposes Perl parity/source text');
@@ -2050,7 +2064,7 @@ section('40. Healthcheck DOCX structure, states, and AI ordering');
   failedReport.aiRequestedAt = '2026-07-15T12:44:00Z';
   failedReport.aiError = 'Authorization: ****** failed';
   const failedDocXml = parseStoredZipEntries(buildHealthcheckDocxBytes(failedReport)).get('word/document.xml') || '';
-  if (failedDocXml.includes('AI-assisted evaluation: Failed') && failedDocXml.includes('2026-07-15T12:44:00Z (UTC)') && /deterministic traffic-light report remains valid and complete/i.test(failedDocXml) && !failedDocXml.includes('sk-test-secret')) ok('Healthcheck DOCX failed state preserves deterministic report and sanitizes errors');
+  if (failedDocXml.includes('AI-assisted evaluation: Failed') && /2026-07-15T12:44:00(?:\.000)?Z \(UTC\)/.test(failedDocXml) && /deterministic traffic-light report remains valid and complete/i.test(failedDocXml) && !failedDocXml.includes('sk-test-secret')) ok('Healthcheck DOCX failed state preserves deterministic report and sanitizes errors');
   else fail('Healthcheck DOCX failed state missing deterministic/sanitized failure details');
   const disabledDocXml = parseStoredZipEntries(buildHealthcheckDocxBytes(evaluateHealthcheckReport(makeHealthState(clone(HEALTH_FIXTURE_GOOD))))).get('word/document.xml') || '';
   if (disabledDocXml.includes('AI-assisted evaluation: Not included') && /no OpenAI request was made/i.test(disabledDocXml)) ok('Healthcheck DOCX shows explicit Not included state when AI is disabled');
@@ -2060,8 +2074,7 @@ section('40. Healthcheck DOCX structure, states, and AI ordering');
   else fail(`Healthcheck DOCX filename not sanitized: ${docxName}`);
 }
 
-
-section('41. New collection field coverage in queries');
+section('42. New collection field coverage in queries');
 {
   const statusQ = ALL_QUERIES.find(q => q.id === 'doc_01_status');
   if (statusQ && /SCHEDMODE/.test(statusQ.sql)) ok('doc_01_status SQL includes SCHEDMODE');
