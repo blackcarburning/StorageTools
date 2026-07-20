@@ -37,7 +37,7 @@ Download exactly one of the unified script types:
 - **Download Complete CMD**
 - **Download Complete SH**
 
-Both formats run the same canonical collection of **78 queries**, package all results into one `.tar` archive inside the configured output folder, and remove only the current run’s temporary working files.
+Both formats run the same canonical collection of **78 queries**, package all results into one `.tar` archive inside the configured output folder, and retain all collected CSV files in that folder alongside the archive.
 
 Generated filenames:
 - `StorageTools_Complete_<SERVER>.cmd`
@@ -52,6 +52,7 @@ Run from **Command Prompt** (not PowerShell):
 ```cmd
 StorageTools_Complete_TSMSERVER01.cmd
 ```
+`tar.exe` is not required. The script automatically uses a built-in PowerShell TAR writer when native `tar.exe` is not present.
 
 #### Unix/Linux (`.sh`)
 Run from a POSIX shell:
@@ -62,7 +63,9 @@ chmod +x StorageTools_Complete_TSMSERVER01.sh
 
 Each query writes one `.csv` file into a temporary working directory. The script performs a credential/connection preflight before running queries, echoes per-query status in real time, mirrors stderr to `collection_errors.log`, translates IBM return codes, and prints final pass/warn/fail totals.
 
-On completion the script packages all CSV files, `collection_log.txt`, `collection_errors.log`, and `manifest.txt` into a single `.tar` archive, verifies the archive is valid and non-empty, then removes only the temporary working directory for that run. The configured output folder itself is kept. **If archiving fails (or the archive is empty), the working directory and generated files are retained for manual recovery.** Pre-existing unrelated files in the output folder are never deleted.
+On completion the script packages all CSV files, `collection_log.txt`, `collection_errors.log`, and `manifest.txt` into a single `.tar` archive, then moves all those files to the configured output folder so they remain accessible regardless of archive success. The configured output folder itself is never deleted. **If archiving fails (or the archive is empty), all collected CSV files are still retained in the output folder and can be imported individually.**
+
+On the **next run** of the same script, the prior loose CSV, manifest, and log files in the output folder are removed before new data is collected (delete-before strategy). Previous `.tar` archives are kept. Pre-existing unrelated files in the output folder are never deleted.
 
 Final archive filename:
 - `StorageTools_Complete_<SANITIZED_SERVER>_<UTC_TIMESTAMP>.tar`
@@ -299,7 +302,7 @@ StorageTools automatically filters these banner lines before header detection an
 | `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Unified workbook including Collection_Log and Collection_Errors sheets |
 | `StorageTools_Healthcheck_Report_<CUSTOMER>_<SERVER>_<DATE>.docx` | Traffic-light healthcheck report exported from the imported archive, including the dedicated AI-assisted evaluation section and its final state metadata |
 
-Individual CSV files and logs are packaged into the `.tar` archive and removed on success. The `.tar` archive is the only collection artifact that should remain after a successful run.
+Individual CSV files and logs are retained in the output folder after every run and are also packaged into the `.tar` archive. Both the archive and the individual files can be imported into StorageTools. On the next run, prior loose collection files are removed before new data is collected; previous `.tar` archives are kept.
 
 ---
 
