@@ -386,6 +386,29 @@ else fail('CMD still references output parent directory');
 if (/StorageTools_Complete_/.test(cmd)) ok('CMD archive filename follows StorageTools_Complete_ prefix');
 else fail('CMD archive filename missing StorageTools_Complete_ prefix');
 
+// New requirements: TAR fallback, delete-before, loose CSV retention
+if (!cmd.includes('[FATAL] tar is not available')) ok('CMD tar check is non-fatal (no abort if tar.exe is missing)');
+else fail('CMD must not abort collection when tar.exe is absent');
+if (cmd.includes('EncodedCommand') && cmd.includes('ST_WORKDIR')) ok('CMD includes PowerShell TAR fallback with env-var interface');
+else fail('CMD missing PowerShell TAR fallback (EncodedCommand + ST_WORKDIR)');
+if (cmd.includes(':TAR_PS')) ok('CMD includes :TAR_PS label for PowerShell fallback branch');
+else fail('CMD missing :TAR_PS label');
+if (cmd.includes('REM Delete previous run loose collection files')) ok('CMD deletes previous run loose files before collection (delete-before)');
+else fail('CMD missing delete-before cleanup comment/logic');
+if (cmd.includes('DEL /Q "%OUTDIR%\\%%F"')) ok('CMD delete-before uses narrowly scoped per-file DEL');
+else fail('CMD delete-before missing per-file DEL pattern');
+if (cmd.includes('MOVE /Y "%WORKDIR%\\collection_log.txt"')) ok('CMD moves collection_log.txt to stable OUTDIR after collection');
+else fail('CMD missing MOVE of collection_log.txt to OUTDIR');
+if (cmd.includes('MOVE /Y "%WORKDIR%\\manifest.txt"')) ok('CMD moves manifest.txt to stable OUTDIR after collection');
+else fail('CMD missing MOVE of manifest.txt to OUTDIR');
+if (cmd.includes('CSV files retained')) ok('CMD reports loose CSV file location to user');
+else fail('CMD missing loose CSV retention message');
+if (cmd.includes('collection data retained in: %OUTDIR%')) ok('CMD reports OUTDIR as CSV location on archive failure');
+else fail('CMD missing archive-failure loose-file location message');
+// No broad wildcard deletion of CSVs (only specific filenames)
+if (!cmd.includes('DEL /Q "%OUTDIR%\\*.csv"')) ok('CMD does not broadly delete all CSV files from OUTDIR');
+else fail('CMD must not use broad *.csv wildcard deletion in OUTDIR');
+
 section('14. Output-directory resolution and safety');
 {
   const elWin = __elements.get('outputDirWindows');
