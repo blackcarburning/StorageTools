@@ -1144,7 +1144,11 @@ function getOptionalWarnFlag(query) {
   return query.warnIfMissing ? '1' : '0';
 }
 
-/** Encode a string as UTF-16LE base64 for PowerShell -EncodedCommand */
+/** Encode a string as UTF-16LE base64 for PowerShell -EncodedCommand.
+ *  NOTE: This function uses charCodeAt() which returns UTF-16 code units.
+ *  It is correct only for strings containing characters in the Basic Multilingual
+ *  Plane (U+0000..U+FFFF).  The PowerShell TAR script it encodes is entirely
+ *  ASCII (U+0000..U+007F), so no surrogate pairs can appear. */
 function utf16leBase64(s) {
   const u8 = new Uint8Array(s.length * 2);
   for (let i = 0; i < s.length; i++) {
@@ -1239,6 +1243,8 @@ function generateCmdContent() {
   lines.push('');
   lines.push('REM Delete previous run loose collection files before starting new collection');
   lines.push('REM (delete-before strategy: stale results are cleared; new results are never deleted after collection)');
+  lines.push('REM collection_errors.log is included so each run starts with a clean error log;');
+  lines.push('REM prior errors are already captured in the previous run\'s .tar archive if one was created.');
   const looseFiles = ['manifest.txt', 'collection_log.txt', 'collection_errors.log',
     ...queries.map(q => q.outputFile)].join(' ');
   lines.push(`FOR %%F IN (${looseFiles}) DO (`);
@@ -1411,6 +1417,8 @@ function generateCmdContent() {
   lines.push('');
   lines.push(':MOVE_LOOSE_FILES');
   lines.push('REM Move current run files to stable output directory -- CSV files are retained after collection');
+  lines.push('REM Individual files are moved by name rather than wildcard to maintain narrow scope;');
+  lines.push('REM WORKDIR is a private staging dir so only StorageTools files are present there.');
   lines.push('MOVE /Y "%WORKDIR%\\collection_log.txt"    "%OUTDIR%\\" >NUL 2>&1');
   lines.push('MOVE /Y "%WORKDIR%\\collection_errors.log" "%OUTDIR%\\" >NUL 2>&1');
   lines.push('MOVE /Y "%WORKDIR%\\manifest.txt"          "%OUTDIR%\\" >NUL 2>&1');
