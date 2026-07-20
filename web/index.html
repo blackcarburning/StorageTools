@@ -1279,7 +1279,7 @@ function generateCmdContent() {
   lines.push('type nul > "%WORKDIR%\\collection_errors.log"');
   lines.push('');
   lines.push('echo Checking server connection and credentials...');
-  lines.push('"%DSMADMC%" -id="%ADMID%" -pa="%ADMPA%" %OPTARG% -commadelimited "QUERY SESSION" > NUL 2>"%WORKDIR%\\preflight.tmp"');
+  lines.push('"%DSMADMC%" -id="%ADMID%" -pa="%ADMPA%" %OPTARG% -commadelimited "select server_name from status" > NUL 2>"%WORKDIR%\\preflight.tmp"');
   lines.push('SET PREFLIGHT_RC=%ERRORLEVEL%');
   lines.push('SET PREFLIGHT_AUTH=1');
   lines.push('IF EXIST "%WORKDIR%\\preflight.tmp" FINDSTR /I "ANS1051I" "%WORKDIR%\\preflight.tmp" > NUL 2>&1 && SET PREFLIGHT_AUTH=0');
@@ -1707,7 +1707,7 @@ function generateShContent() {
   lines.push('');
   lines.push('PREFLIGHT_TMP="$(mktemp "$WORKDIR/preflight.XXXXXX" 2>/dev/null)" || PREFLIGHT_TMP="${WORKDIR}/preflight$$.tmp"');
   lines.push('echo "Checking server connection and credentials..."');
-  lines.push("run_dsmadmc 'QUERY SESSION' > /dev/null 2>\"$PREFLIGHT_TMP\"");
+  lines.push("run_dsmadmc 'select server_name from status' > /dev/null 2>\"$PREFLIGHT_TMP\"");
   lines.push('PREFLIGHT_RC=$?');
   lines.push("if [ \"$PREFLIGHT_RC\" -ne 0 ] || grep -qi 'ANS1051I' \"$PREFLIGHT_TMP\" 2>/dev/null; then");
   lines.push('  rc_info "$PREFLIGHT_RC"');
