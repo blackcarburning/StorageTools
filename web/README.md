@@ -9,7 +9,7 @@ A self-contained, **no-install** browser application that generates one complete
 | Component | Requirement |
 |-----------|-------------|
 | Browser   | Any modern browser (Chrome, Edge, Firefox). No server needed — open `index.html` directly. |
-| Windows host (optional) | `dsmadmc.exe` from the IBM Storage Protect administrative client package for `.cmd` scripts; `tar.exe` (included with Windows 10 1803+ and Windows Server 2019+). |
+| Windows host (optional) | `dsmadmc.exe` from the IBM Storage Protect administrative client package for `.cmd` scripts. Archive creation uses PowerShell (built in to Windows 7/Server 2008 R2 and later); no separate `tar.exe` installation is required. |
 | Unix/Linux host (optional) | `dsmadmc` administrative client binary for `.sh` scripts (for example `/opt/tivoli/tsm/client/ba/bin/dsmadmc`); `tar` (standard on all POSIX systems). |
 | XLSX / DOCX export | Built into `index.html` as self-contained exporters; no CDN, installation, or companion files required. |
 
@@ -45,7 +45,7 @@ Generated filenames:
 
 ### Step 4 — Run the script on a host with the admin client
 
-> **Requirement:** `tar` must be available on the collection host. The script checks for `tar`/`tar.exe` before running and exits with a clear error if it is not found.
+> **Windows archive creation:** The generated `.cmd` script includes a built-in PowerShell TAR writer as a fallback; no separate `tar.exe` installation is required. If `tar.exe` is present it is used for speed, otherwise the built-in implementation writes a standards-compliant uncompressed USTAR archive directly.
 
 #### Windows (`.cmd`)
 Run from **Command Prompt** (not PowerShell):
