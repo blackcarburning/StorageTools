@@ -1596,7 +1596,9 @@ section('29. Windows CMD dsmadmc invocation (credentials and optfile)');
   }
 
   // Preflight must use quoted credentials too
-  const preflightLine = cmd.split(/\r?\n/).find(l => l.includes('%WORKDIR%\\preflight.tmp'));
+  const cmdLines = cmd.split(/\r?\n/);
+  const preflightLineIndex = cmdLines.findIndex(l => l.includes('Checking server connection and credentials...'));
+  const preflightLine = preflightLineIndex >= 0 ? cmdLines[preflightLineIndex + 1] : '';
   if (
     preflightLine &&
     preflightLine.includes('-id="%ADMID%"') &&
@@ -1618,7 +1620,9 @@ section('29b. Generated preflight command uses bounded SELECT');
     fail('CMD script still contains QUERY SESSION');
   }
 
-  const shPreflightLine = sh.split(/\r?\n/).find(l => l.includes('PREFLIGHT_TMP') && l.includes('run_dsmadmc'));
+  const shLines = sh.split(/\r?\n/);
+  const shPreflightLineIndex = shLines.findIndex(l => l.includes('Checking server connection and credentials...'));
+  const shPreflightLine = shPreflightLineIndex >= 0 ? shLines[shPreflightLineIndex + 1] : '';
   if (
     shPreflightLine &&
     shPreflightLine.includes("'select server_name from status'") &&
