@@ -256,7 +256,7 @@ else missingShOutputs.forEach(q => fail(`SH script missing ${q.outputFile}`));
 
 section('8. Script diagnostics and RC handling');
 const requiredCmd = [
-  'collection_errors.log', 'collection_log.txt', 'QUERY SESSION', ':RCInfo', 'RC_NOTABLE',
+  'collection_errors.log', 'collection_log.txt', 'select server_name from status', ':RCInfo', 'RC_NOTABLE',
   'OPTIONAL_NOTABLE_WARN', 'ANS1051I', 'PASS_COUNT', 'WARN_COUNT', 'FAIL_COUNT', 'Preflight OK -- connection verified.'
 ];
 for (const token of requiredCmd) {
@@ -264,7 +264,7 @@ for (const token of requiredCmd) {
   else fail(`CMD script missing ${token}`);
 }
 const requiredSh = [
-  'collection_errors.log', 'collection_log.txt', 'rc_info()', 'run_query()', 'QUERY SESSION',
+  'collection_errors.log', 'collection_log.txt', 'rc_info()', 'run_query()', 'select server_name from status',
   'QWARNMISSING', 'RC_NOTABLE', 'ANS1051I', 'PASS_COUNT', 'WARN_COUNT', 'FAIL_COUNT', 'tee -a "$ERRLOG"'
 ];
 for (const token of requiredSh) {
@@ -1596,11 +1596,47 @@ section('29. Windows CMD dsmadmc invocation (credentials and optfile)');
   }
 
   // Preflight must use quoted credentials too
-  const preflightLine = cmd.split(/\r?\n/).find(l => l.includes('QUERY SESSION'));
-  if (preflightLine && preflightLine.includes('-id="%ADMID%"') && preflightLine.includes('-pa="%ADMPA%"')) {
-    ok('CMD preflight dsmadmc uses quoted credentials');
+  const cmdLines = cmd.split(/\r?\n/);
+  const preflightLineIndex = cmdLines.findIndex(l => l.includes('Checking server connection and credentials...'));
+  const preflightLine = preflightLineIndex >= 0 ? cmdLines[preflightLineIndex + 1] : '';
+  if (
+    preflightLine &&
+    preflightLine.includes('-id="%ADMID%"') &&
+    preflightLine.includes('-pa="%ADMPA%"') &&
+    preflightLine.includes('"select server_name from status"') &&
+    !preflightLine.includes('QUERY SESSION')
+  ) {
+    ok('CMD preflight dsmadmc uses quoted credentials and preflight SELECT');
   } else {
-    fail('CMD preflight dsmadmc missing quoted credentials');
+    fail('CMD preflight dsmadmc missing quoted credentials or preflight SELECT');
+  }
+}
+
+section('29b. Generated preflight command uses bounded SELECT');
+{
+  if (!cmd.includes('QUERY SESSION')) {
+    ok('CMD script does not contain QUERY SESSION');
+  } else {
+    fail('CMD script still contains QUERY SESSION');
+  }
+
+  const shLines = sh.split(/\r?\n/);
+  const shPreflightLineIndex = shLines.findIndex(l => l.includes('Checking server connection and credentials...'));
+  const shPreflightLine = shPreflightLineIndex >= 0 ? shLines[shPreflightLineIndex + 1] : '';
+  if (
+    shPreflightLine &&
+    shPreflightLine.includes("'select server_name from status'") &&
+    !shPreflightLine.includes('QUERY SESSION')
+  ) {
+    ok('SH preflight uses bounded SELECT instead of QUERY SESSION');
+  } else {
+    fail('SH preflight missing bounded SELECT or still uses QUERY SESSION');
+  }
+
+  if (!sh.includes('QUERY SESSION')) {
+    ok('SH script does not contain QUERY SESSION');
+  } else {
+    fail('SH script still contains QUERY SESSION');
   }
 }
 
