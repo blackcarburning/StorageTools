@@ -379,6 +379,10 @@ for (const token of cmdArchiveTokens) {
   if (cmd.includes(token)) ok(`CMD includes: ${token}`);
   else fail(`CMD missing: ${token}`);
 }
+if (!cmd.includes('[FATAL] tar is not available')) ok('CMD does not fatally abort on missing tar');
+else fail('CMD must not fatally abort on missing tar');
+if (cmd.includes('-EncodedCommand')) ok('CMD contains PowerShell EncodedCommand TAR fallback');
+else fail('CMD missing PowerShell EncodedCommand TAR fallback');
 if (!cmd.includes('RD /S /Q "%OUTDIR%"')) ok('CMD does not delete configured output directory');
 else fail('CMD must not delete configured output directory');
 if (!cmd.includes('SET "OUTPARENT=')) ok('CMD no longer writes archive to output parent directory');
