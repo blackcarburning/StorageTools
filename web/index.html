@@ -1109,12 +1109,13 @@ const STATE = {
 
 /** PowerShell USTAR TAR writer embedded in the generated CMD as a base64-encoded command.
  *  Reads $env:WORKDIR and $env:ARCHIVE_TMP; writes a POSIX-compatible uncompressed TAR.
- *  Compatible with Windows PowerShell 2.0+ (.NET 2.0+); no external tools required. */
+ *  Compatible with Windows PowerShell 2.0+ (.NET 2.0+); no external tools required.
+ *  NOTE: PS_TAR_SCRIPT is intentionally ASCII-only; psToEncodedCommand encodes it safely. */
 const PS_TAR_SCRIPT = `$ErrorActionPreference='Stop'
 try {
   $src=$env:WORKDIR
   $dst=$env:ARCHIVE_TMP
-  if (-not $src.EndsWith('\\')) { $src=$src+'\\' }
+  $src=$src.TrimEnd('\\','/') + '\\'
   $srcLen=$src.Length
   function ToOct([long]$v,[int]$w) {
     if ($v -eq 0) { return '0'.PadLeft($w,'0') }
@@ -1131,7 +1132,7 @@ try {
       $size=$info.Length
       $hdr=New-Object System.Byte[] 512
       $nb=[System.Text.Encoding]::UTF8.GetBytes($rel)
-      if ($nb.Length -gt 100) { $nb=$nb[0..99] }
+      if ($nb.Length -gt 100) { $nb=$nb[0..99];Write-Warning "Path truncated in TAR header: $rel" }
       [Array]::Copy($nb,$hdr,$nb.Length)
       [Array]::Copy([System.Text.Encoding]::ASCII.GetBytes('0000644'+[char]0),0,$hdr,100,8)
       $zb=[System.Text.Encoding]::ASCII.GetBytes('0000000'+[char]0)
@@ -1155,7 +1156,8 @@ try {
   exit 0
 } catch { Write-Error $_;exit 1 }`;
 
-/** Encode a PowerShell script as UTF-16LE base64 for use with powershell -EncodedCommand. */
+/** Encode a PowerShell script as UTF-16LE base64 for use with powershell -EncodedCommand.
+ *  PS_TAR_SCRIPT is ASCII-only (code points 0-127) so surrogate pairs cannot occur. */
 function psToEncodedCommand(ps) {
   const bytes = [];
   for (let i = 0; i < ps.length; i++) {
