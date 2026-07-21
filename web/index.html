@@ -2939,8 +2939,9 @@ function addQueryBlock(ws, startRow, query, data) {
       const numCols = Math.max(row.length, headers.length);
       for (let c = 0; c < numCols; c++) {
         const val = c < row.length ? row[c] : '';
-        const num = parseFloat(val);
-        const v   = (!isNaN(num) && val !== null) ? num : (val || '');
+        const text = String(val == null ? '' : val).trim();
+        const isNumeric = text !== '' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(text);
+        const v = isNumeric ? Number(text) : (val || '');
         ws_set(ws, r, c, v, rowStyle);
       }
       ws_updateRef(ws, r, Math.max(0, numCols - 1));
