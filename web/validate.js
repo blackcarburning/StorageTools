@@ -1273,13 +1273,35 @@ if (typeof parseDsmOutput !== 'function') {
     else fail(`buildImportedState: schema-backed SELECT * headers failed: ${JSON.stringify(dbspace)}`);
 
     const nodesQuery = ALL_QUERIES.find(q => q.outputFile === 'doc_07_nodes.csv');
-    const nodeHeaderLine = nodesQuery && Array.isArray(nodesQuery.columns) ? nodesQuery.columns.join(',') : 'NODE_NAME,PLATFORM_NAME';
+    const nodeHeaderLine = nodesQuery && Array.isArray(nodesQuery.columns)
+      ? nodesQuery.columns.join(',')
+      : (nodesQuery ? deriveExpectedColumnsFromSql(nodesQuery.sql).join(',') : 'NODE_NAME,PLATFORM_NAME');
     const nodesImported = buildImportedState({
       'doc_07_nodes.csv': [
         nodeHeaderLine,
-        'NODE1,AIX,,,,,,,,,,,,',
+        'NODE1,2026-07-20 10:00:00.000000,AIX,,,,,,,,,,,,,',
         '"(c) Copyright by IBM Corporation and other(s) 1990","2020"',
-        'NODE2,LINUX,,,,,,,,,,,,',
+        'NODE2,2026-07-19 09:00:00.000000,LINUX,,,,,,,,,,,,,',
+      ].join('\n'),
+      'doc_08_nodes_platform.csv': [
+        'PLATFORM_NAME,NODE_COUNT,MOST_RECENT_LASTACC_TIME',
+        'AIX,1,2026-07-20 10:00:00.000000',
+      ].join('\n'),
+      'doc_09_nodes_version.csv': [
+        'CLIENT_VERSION,CLIENT_RELEASE,CLIENT_LEVEL,CLIENT_SUBLEVEL,NODE_COUNT,MOST_RECENT_LASTACC_TIME',
+        '8,1,27,0,2,2026-07-20 10:00:00.000000',
+      ].join('\n'),
+      'hc_13_not_backed_up.csv': [
+        'NODE_NAME,LASTACC_TIME',
+        'NODE1,2026-07-20 10:00:00.000000',
+      ].join('\n'),
+      'hc_14_never_contacted.csv': [
+        'NODE_NAME,REG_TIME,LASTACC_TIME,DOMAIN_NAME,NODETYPE',
+        'NODE3,2026-07-01 08:00:00.000000,,DOMAIN1,CLIENT',
+      ].join('\n'),
+      'hc_17_no_repl_start.csv': [
+        'NODE_NAME,LASTACC_TIME',
+        'NODE2,2026-07-19 09:00:00.000000',
       ].join('\n'),
     });
     const nodes = nodesImported['doc_07_nodes.csv'];
@@ -1297,6 +1319,8 @@ if (typeof parseDsmOutput !== 'function') {
       .map(([, cell]) => String(cell && cell.v !== undefined ? cell.v : ''));
     if (nodeSheetValues.includes('NODE1') && nodeSheetValues.includes('NODE2') && !nodeSheetValues.some(value => /Copyright by IBM Corporation and other\(s\)/i.test(value))) ok('XLSX report: Nodes sheet excludes split IBM Corporation copyright banner row');
     else fail(`XLSX report: Nodes sheet still contains split copyright banner data: ${JSON.stringify(nodeSheetValues)}`);
+    if (nodeSheetValues.includes('LASTACC_TIME') && nodeSheetValues.includes('MOST_RECENT_LASTACC_TIME')) ok('XLSX report: Nodes sheet exposes last access headers for detailed and aggregate reports');
+    else fail(`XLSX report: Nodes sheet missing last access headers: ${JSON.stringify(nodeSheetValues)}`);
   } else {
     fail('buildImportedState is not exported');
   }
@@ -1863,8 +1887,8 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
   ],
   'doc_06_admins.csv': [{ ADMIN_NAME: 'ADMIN', LOCKED: 'YES' }],
   'doc_07_nodes.csv': [
-    { NODE_NAME: 'NODE1', TCP_ADDRESS: '192.168.1.10' },
-    { NODE_NAME: 'NODE2', TCP_ADDRESS: '192.168.1.11' },
+    { NODE_NAME: 'NODE1', LASTACC_TIME: '2026-07-20 10:00:00.000000', TCP_ADDRESS: '192.168.1.10' },
+    { NODE_NAME: 'NODE2', LASTACC_TIME: '2026-07-19 09:00:00.000000', TCP_ADDRESS: '192.168.1.11' },
   ],
   'doc_10_filespaces.csv': [{ NODE_NAME: 'NODE1', FILESPACE_NAME: '/fs1', BACKUP_END: '2026-07-10T00:00:00Z' }],
   'doc_17_admin_schedules.csv': [
@@ -2317,8 +2341,34 @@ section('42. New collection field coverage in queries');
   const nodeQ = ALL_QUERIES.find(q => q.id === 'doc_07_nodes');
   if (nodeQ && /TCP_ADDRESS/.test(nodeQ.sql)) ok('doc_07_nodes SQL includes TCP_ADDRESS');
   else fail('doc_07_nodes SQL missing TCP_ADDRESS');
+  if (nodeQ && /LASTACC_TIME/.test(nodeQ.sql)) ok('doc_07_nodes SQL includes LASTACC_TIME');
+  else fail('doc_07_nodes SQL missing LASTACC_TIME');
   if (nodeQ && /NODE_NAME/.test(nodeQ.sql) && /DOMAIN_NAME/.test(nodeQ.sql) && /DEDUPLICATION/.test(nodeQ.sql)) ok('doc_07_nodes SQL retains existing columns');
   else fail('doc_07_nodes SQL lost existing columns');
+
+  const platformQ = ALL_QUERIES.find(q => q.id === 'doc_08_nodes_platform');
+  if (platformQ && /MAX\(LASTACC_TIME\)\s+AS\s+MOST_RECENT_LASTACC_TIME/i.test(platformQ.sql)) ok('doc_08_nodes_platform SQL includes aggregated MOST_RECENT_LASTACC_TIME');
+  else fail('doc_08_nodes_platform SQL missing aggregated MOST_RECENT_LASTACC_TIME');
+
+  const versionQ = ALL_QUERIES.find(q => q.id === 'doc_09_nodes_version');
+  if (versionQ && /MAX\(LASTACC_TIME\)\s+AS\s+MOST_RECENT_LASTACC_TIME/i.test(versionQ.sql)) ok('doc_09_nodes_version SQL includes aggregated MOST_RECENT_LASTACC_TIME');
+  else fail('doc_09_nodes_version SQL missing aggregated MOST_RECENT_LASTACC_TIME');
+
+  const notBackedUpQ = ALL_QUERIES.find(q => q.id === 'hc_13_not_backed_up');
+  if (notBackedUpQ && /LEFT JOIN NODES N ON N\.NODE_NAME=F\.NODE_NAME/i.test(notBackedUpQ.sql) && /LASTACC_TIME/.test(notBackedUpQ.sql)) ok('hc_13_not_backed_up SQL joins NODES for LASTACC_TIME');
+  else fail('hc_13_not_backed_up SQL missing NODES join for LASTACC_TIME');
+  if (notBackedUpQ && Array.isArray(notBackedUpQ.columns) && notBackedUpQ.columns.join(',') === 'NODE_NAME,LASTACC_TIME') ok('hc_13_not_backed_up columns metadata includes LASTACC_TIME');
+  else fail('hc_13_not_backed_up columns metadata missing LASTACC_TIME');
+
+  const neverContactedQ = ALL_QUERIES.find(q => q.id === 'hc_14_never_contacted');
+  if (neverContactedQ && /LASTACC_TIME/.test(neverContactedQ.sql)) ok('hc_14_never_contacted SQL includes LASTACC_TIME');
+  else fail('hc_14_never_contacted SQL missing LASTACC_TIME');
+  if (neverContactedQ && Array.isArray(neverContactedQ.columns) && neverContactedQ.columns.includes('LASTACC_TIME')) ok('hc_14_never_contacted columns metadata includes LASTACC_TIME');
+  else fail('hc_14_never_contacted columns metadata missing LASTACC_TIME');
+
+  const noReplQ = ALL_QUERIES.find(q => q.id === 'hc_17_no_repl_start');
+  if (noReplQ && /LEFT JOIN NODES N ON N\.NODE_NAME=F\.NODE_NAME/i.test(noReplQ.sql) && /LASTACC_TIME/.test(noReplQ.sql)) ok('hc_17_no_repl_start SQL joins NODES for LASTACC_TIME');
+  else fail('hc_17_no_repl_start SQL missing NODES join for LASTACC_TIME');
 }
 
 section('42. Scratch warnings query correctness');
@@ -2767,7 +2817,7 @@ section('53. Archive import maps new fields correctly');
   const parsedState = buildImportedState({
     'doc_01_status.csv': 'SERVER_NAME,ACTLOGRETENTION,SCHEDMODE,SUMMARYRETENTION,EVENTRETENTION\nSRV1,30,POLLING,30,30',
     'doc_34_drm_status.csv': 'PLANPREFIX,INSTRPREFIX,NONMOUNTNAME,COURIERNAME,VAULTNAME,DBBEXPIREDAYS,CHECKLABEL,FILEPROCESS\n,,,,,3,No,Yes',
-    'doc_07_nodes.csv': 'NODE_NAME,TCP_ADDRESS\nNODE1,10.0.0.1',
+    'doc_07_nodes.csv': 'NODE_NAME,LASTACC_TIME,TCP_ADDRESS\nNODE1,2026-07-20 10:00:00.000000,10.0.0.1',
     'hc_35_scratch_warnings.csv': 'MSGNO,WARNING_COUNT\n692,5',
     'hc_36_tape_mounts.csv': 'DRIVE_COUNT,TOTAL_MOUNT_MINUTES,WINDOW_HOURS\n4,1000,168',
   });
@@ -2789,6 +2839,8 @@ section('53. Archive import maps new fields correctly');
   const nodeImported = parsedState['doc_07_nodes.csv'];
   if (nodeImported && nodeImported.headers.includes('TCP_ADDRESS')) ok('Import: doc_07_nodes includes TCP_ADDRESS header');
   else fail('Import: doc_07_nodes missing TCP_ADDRESS header');
+  if (nodeImported && nodeImported.headers.includes('LASTACC_TIME')) ok('Import: doc_07_nodes includes LASTACC_TIME header');
+  else fail('Import: doc_07_nodes missing LASTACC_TIME header');
 
   const scratchImported = parsedState['hc_35_scratch_warnings.csv'];
   if (scratchImported && scratchImported.headers.includes('MSGNO') && scratchImported.headers.includes('WARNING_COUNT')) ok('Import: hc_35_scratch_warnings has correct headers');
