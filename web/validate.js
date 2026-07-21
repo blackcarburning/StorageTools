@@ -2992,6 +2992,58 @@ section('55. IBM SP SQL regression — hc_13 and hc_17 use compatible direct-joi
   if (sh.includes('SELECT DISTINCT F.NODE_NAME,N.LASTACC_TIME FROM FILESPACES F,NODES N WHERE F.NODE_NAME=N.NODE_NAME AND F.LAST_REPL_START_1')) ok('SH hc_17_no_repl_start: contains compatible direct-join SQL');
   else fail('SH hc_17_no_repl_start: missing compatible direct-join SQL');
 }
+
+section('56. ACTLOG no-match filtering');
+{
+  const actlogQuery = { id: 'hc_18_actlog_errors', outputFile: 'hc_18_actlog_errors.csv', actlogSource: true };
+
+  // ACTLOG row where ANR2034E appears in the MSGNO field and "No match found" in MESSAGE:
+  // the combined text starts with DATE_TIME so the generic NO_MATCH_RECORD_RE (^ANR2034E...)
+  // would not catch it — the ACTLOG-specific filter must discard it.
+  const actlogNoMatchRow = parseDsmOutput(
+    '2026-07-20 10:00:00.000000,W,ANR2034E,SELECT: No match found using this criteria.,,,,,',
+    actlogQuery
+  );
+  if (actlogNoMatchRow.rows.length === 0) ok('ACTLOG no-match: row with "No match found" in MESSAGE field is filtered');
+  else fail(`ACTLOG no-match: row with "No match found" in MESSAGE field leaked into data: ${JSON.stringify(actlogNoMatchRow)}`);
+
+  // Case variation: "NO MATCH FOUND" in upper case
+  const actlogNoMatchUpper = parseDsmOutput(
+    '2026-07-20 10:00:00.000000,E,ANR2034E,SELECT: NO MATCH FOUND using this criteria.,,,,,',
+    actlogQuery
+  );
+  if (actlogNoMatchUpper.rows.length === 0) ok('ACTLOG no-match: upper-case "NO MATCH FOUND" is filtered');
+  else fail(`ACTLOG no-match: upper-case "NO MATCH FOUND" leaked into data: ${JSON.stringify(actlogNoMatchUpper)}`);
+
+  // Valid ACTLOG row that does NOT contain "No match found" — must be preserved
+  const actlogValid = parseDsmOutput([
+    'DATE_TIME,SEVERITY,MSGNO,MESSAGE,NODENAME,SERVERNAME,SCHEDNAME,DOMAINNAME,ORIGINATOR',
+    '2026-07-20 10:00:00.000000,W,ANR0406W,Volume TAPE01 is unavailable.,NODE1,SRV1,,,',
+  ].join('\n'), actlogQuery);
+  if (actlogValid.rows.length === 1 && actlogValid.rows[0][2] === 'ANR0406W') ok('ACTLOG no-match: valid ACTLOG row without "No match found" is preserved');
+  else fail(`ACTLOG no-match: valid ACTLOG row was incorrectly filtered: ${JSON.stringify(actlogValid)}`);
+
+  // Non-ACTLOG query: a data row containing "No match found" in a field must NOT be removed
+  // by the ACTLOG-specific filter (only the generic ANR2034E pattern applies to non-ACTLOG queries).
+  const nonActlogQuery = { id: 'some_other_query', outputFile: 'other.csv', columns: ['COL_A', 'COL_B'] };
+  const nonActlogWithPhrase = parseDsmOutput(
+    'COL_A,COL_B\nSomeValue,No match found in description',
+    nonActlogQuery
+  );
+  if (nonActlogWithPhrase.rows.length === 1) ok('ACTLOG no-match: non-ACTLOG row containing "No match found" in a field is preserved');
+  else fail(`ACTLOG no-match: non-ACTLOG row was incorrectly filtered by ACTLOG-specific rule: ${JSON.stringify(nonActlogWithPhrase)}`);
+
+  // Verify actlogSource flag is set on the three ACTLOG queries
+  const q18 = ALL_QUERIES.find(q => q.id === 'hc_18_actlog_errors');
+  const q19 = ALL_QUERIES.find(q => q.id === 'hc_19_actlog_severe');
+  const q35 = ALL_QUERIES.find(q => q.id === 'hc_35_scratch_warnings');
+  if (q18 && q18.actlogSource === true) ok('hc_18_actlog_errors has actlogSource:true');
+  else fail('hc_18_actlog_errors missing actlogSource:true');
+  if (q19 && q19.actlogSource === true) ok('hc_19_actlog_severe has actlogSource:true');
+  else fail('hc_19_actlog_severe missing actlogSource:true');
+  if (q35 && q35.actlogSource === true) ok('hc_35_scratch_warnings has actlogSource:true');
+  else fail('hc_35_scratch_warnings missing actlogSource:true');
+}
 if (FAIL > 0) {
   console.error('VALIDATION FAILED');
   process.exit(1);
