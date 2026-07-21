@@ -51,7 +51,8 @@ let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatS
     HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes,
     filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload,
     requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename,
-    refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml, __elements;
+    refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml,
+    renderMarkdownToHtml, __elements;
 try {
   const elements = new Map();
   const makeEl = (value = '') => ({
@@ -128,7 +129,7 @@ try {
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
     'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES, HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes, filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload, requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename, refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml, __elements: document.__elements };`
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES, HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes, filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload, requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename, refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml, renderMarkdownToHtml, __elements: document.__elements };`
   );
   const result = sandbox(
     mockDoc,
@@ -151,7 +152,8 @@ try {
      HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes,
      filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload,
      requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename,
-     refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml, __elements } = result);
+     refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml,
+     renderMarkdownToHtml, __elements } = result);
 } catch (err) {
   fail(`Could not evaluate index.html script: ${err.message}`);
   process.exit(1);
@@ -3043,6 +3045,90 @@ section('56. ACTLOG no-match filtering');
   else fail('hc_19_actlog_severe missing actlogSource:true');
   if (q35 && q35.actlogSource === true) ok('hc_35_scratch_warnings has actlogSource:true');
   else fail('hc_35_scratch_warnings missing actlogSource:true');
+}
+
+section('57. Markdown renderer — renderMarkdownToHtml correctness and security');
+{
+  // Headings must not appear as raw # markers
+  const h1Out = renderMarkdownToHtml('# Title');
+  if (!h1Out.includes('#') && h1Out.includes('<h') && h1Out.includes('Title')) ok('renderMarkdownToHtml: h1 renders as HTML heading without # marker');
+  else fail(`renderMarkdownToHtml: h1 heading not converted: ${h1Out}`);
+
+  const h2Out = renderMarkdownToHtml('## Section');
+  if (!h2Out.includes('##') && h2Out.includes('<h') && h2Out.includes('Section')) ok('renderMarkdownToHtml: h2 renders as HTML heading without ## marker');
+  else fail(`renderMarkdownToHtml: h2 heading not converted: ${h2Out}`);
+
+  const h3Out = renderMarkdownToHtml('### Subsection');
+  if (!h3Out.includes('###') && h3Out.includes('<h') && h3Out.includes('Subsection')) ok('renderMarkdownToHtml: h3 renders as HTML heading without ### marker');
+  else fail(`renderMarkdownToHtml: h3 heading not converted: ${h3Out}`);
+
+  // Bold must not display ** markers
+  const boldOut = renderMarkdownToHtml('**important** text');
+  if (!boldOut.includes('**') && boldOut.includes('<strong>important</strong>') && boldOut.includes('text')) ok('renderMarkdownToHtml: **bold** renders as <strong> without ** markers');
+  else fail(`renderMarkdownToHtml: bold not converted: ${boldOut}`);
+
+  // Unordered list items must become <ul><li>
+  const ulOut = renderMarkdownToHtml('- item one\n- item two');
+  if (ulOut.includes('<ul') && ulOut.includes('<li>') && ulOut.includes('item one') && !ulOut.includes('- item')) ok('renderMarkdownToHtml: bullet list becomes <ul><li>');
+  else fail(`renderMarkdownToHtml: bullet list not converted: ${ulOut}`);
+
+  // Ordered list must become <ol><li>
+  const olOut = renderMarkdownToHtml('1. first\n2. second');
+  if (olOut.includes('<ol') && olOut.includes('<li>') && olOut.includes('first') && !/1\. first/.test(olOut)) ok('renderMarkdownToHtml: numbered list becomes <ol><li>');
+  else fail(`renderMarkdownToHtml: numbered list not converted: ${olOut}`);
+
+  // HTML / script injection must be escaped and cannot execute
+  const xssOut = renderMarkdownToHtml('<script>alert(1)</script>');
+  if (!xssOut.includes('<script>') && xssOut.includes('&lt;script&gt;') && !xssOut.includes('alert(1)</script>')) ok('renderMarkdownToHtml: <script> tags are HTML-escaped and cannot execute');
+  else fail(`renderMarkdownToHtml: <script> not escaped: ${xssOut}`);
+
+  const imgOut = renderMarkdownToHtml('<img src=x onerror=alert(1)>');
+  if (!imgOut.includes('<img') && imgOut.includes('&lt;img')) ok('renderMarkdownToHtml: <img onerror> is HTML-escaped');
+  else fail(`renderMarkdownToHtml: <img> not escaped: ${imgOut}`);
+
+  // Plain text (no Markdown) must remain readable as a paragraph
+  const plainOut = renderMarkdownToHtml('Just plain text with no markdown.');
+  if (plainOut.includes('Just plain text') && !plainOut.includes('<h') && !plainOut.includes('<ul>') && !plainOut.includes('<ol>')) ok('renderMarkdownToHtml: plain text produces readable paragraph output');
+  else fail(`renderMarkdownToHtml: plain text fallback broken: ${plainOut}`);
+
+  // Mixed Markdown should produce structured output without raw markers
+  const mixedMd = '## Overview\n\nSome **important** finding.\n\n- Point A\n- Point B\n\n1. Action one\n2. Action two';
+  const mixedOut = renderMarkdownToHtml(mixedMd);
+  if (!mixedOut.includes('##') && !mixedOut.includes('**') && !/^- /m.test(mixedOut) && !/^\d+\. /m.test(mixedOut)) ok('renderMarkdownToHtml: mixed Markdown produces no raw markers');
+  else fail(`renderMarkdownToHtml: mixed Markdown still contains raw markers: ${mixedOut}`);
+  if (mixedOut.includes('<h') && mixedOut.includes('<strong>') && mixedOut.includes('<ul') && mixedOut.includes('<ol')) ok('renderMarkdownToHtml: mixed Markdown produces headings, bold, ul, and ol');
+  else fail(`renderMarkdownToHtml: mixed Markdown missing expected elements: ${mixedOut}`);
+
+  // Blank/empty input must not throw or produce broken markup
+  const emptyOut = renderMarkdownToHtml('');
+  if (emptyOut === '' || !emptyOut.includes('<script>')) ok('renderMarkdownToHtml: empty input returns empty or safe string');
+  else fail(`renderMarkdownToHtml: empty input produced unexpected output: ${emptyOut}`);
+}
+
+section('58. Markdown rendering in the AI narrative HTML and DOCX report');
+{
+  const mdReport = evaluateHealthcheckReport(makeHealthState(clone(HEALTH_FIXTURE_GOOD)));
+  const mdText = '## Overview\n\n**Red finding:** The pool is full.\n\n- Check pool capacity\n- Expand storage\n\n1. Action one\n2. Action two';
+  mdReport.aiState = 'INCLUDED';
+  mdReport.aiAnalysis = { text: mdText, model: 'gpt-4.1', generatedAt: '2026-07-20T10:00:00Z' };
+  mdReport.aiModel = 'gpt-4.1';
+  mdReport.aiGeneratedAt = '2026-07-20T10:00:00Z';
+
+  const htmlOut = buildHealthcheckReportHtml(mdReport, 'blob:test');
+  if (!htmlOut.includes('## Overview') && !htmlOut.includes('**Red finding:**') && !/^- Check/m.test(htmlOut)) ok('HTML report: AI narrative has no raw Markdown markers');
+  else fail('HTML report: AI narrative still contains raw Markdown markers');
+  if (htmlOut.includes('<h') && htmlOut.includes('<strong>') && htmlOut.includes('<ul') && htmlOut.includes('<ol')) ok('HTML report: AI narrative rendered as structured HTML');
+  else fail('HTML report: AI narrative missing structured HTML elements');
+
+  const docxXml = parseStoredZipEntries(buildHealthcheckDocxBytes(mdReport)).get('word/document.xml') || '';
+  if (!docxXml.includes('## Overview') && !docxXml.includes('**Red finding:**') && !/- Check/.test(docxXml)) ok('DOCX report: AI narrative has no raw Markdown markers');
+  else fail('DOCX report: AI narrative still contains raw Markdown markers');
+  if (docxXml.includes('Overview') && docxXml.includes('Red finding:') && docxXml.includes('Check pool capacity')) ok('DOCX report: AI narrative text content preserved without Markdown syntax');
+  else fail('DOCX report: AI narrative content missing after Markdown stripping');
+
+  // DOCX should use Heading2 for AI narrative headings
+  if (docxXml.includes('Heading2')) ok('DOCX report: AI narrative headings use Heading2 style');
+  else fail('DOCX report: AI narrative headings missing Heading2 style');
 }
 if (FAIL > 0) {
   console.error('VALIDATION FAILED');

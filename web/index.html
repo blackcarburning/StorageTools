@@ -115,6 +115,15 @@ pre{padding:12px;overflow-x:auto;line-height:1.5}
 .health-summary-list{padding-left:18px;line-height:1.8}
 .health-table td,.health-table th{font-size:12px}
 .health-muted{color:#6b7280}
+.ai-narrative{font-size:13px;line-height:1.75;color:#1f2937;word-wrap:break-word;overflow-wrap:break-word}
+.ai-narrative .ai-h{color:#1a3a5c;margin:16px 0 5px;font-weight:600}
+.ai-narrative h3.ai-h{font-size:14px}
+.ai-narrative h4.ai-h{font-size:13px;color:#374151}
+.ai-narrative h5.ai-h{font-size:12.5px;color:#4b5563}
+.ai-narrative .ai-p{margin:5px 0;line-height:1.75}
+.ai-narrative .ai-ul,.ai-narrative .ai-ol{margin:5px 0 8px;padding-left:22px}
+.ai-narrative li{margin-bottom:3px}
+.ai-advisory{font-size:11.5px;color:#374151;background:#f0f7ff;border-left:3px solid #3b82f6;padding:7px 10px;border-radius:0 4px 4px 0;margin-bottom:10px}
 footer{text-align:center;padding:14px;font-size:12px;color:#9ca3af;margin-top:8px}
 #statusBar{position:fixed;bottom:0;left:0;right:0;background:#1a3a5c;color:#fff;padding:7px 16px;font-size:13px;display:none;z-index:100}
 </style>
@@ -3415,6 +3424,170 @@ function escapeAttr(value) {
   return escapeHtml(value).replace(/`/g, '&#96;');
 }
 
+// Renders a constrained subset of Markdown to safe HTML.
+// All text is HTML-escaped before Markdown structure is applied, so model output
+// cannot inject arbitrary HTML or execute scripts.
+// Supports: headings (# through ######), **bold**, *em*, unordered lists (- / *),
+// ordered lists (1. / 1)), and paragraph breaks on blank lines.
+function renderMarkdownToHtml(text) {
+  if (!text || !String(text).trim()) return '';
+  const lines = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+  // Apply inline bold/em to already-escaped text.  * is not an HTML-special char so
+  // it passes through escapeHtml unchanged; we can safely match and replace it here.
+  const applyInline = escaped =>
+    escaped
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+
+  let out = '';
+  let listType = '';      // 'ul' | 'ol' | ''
+  let paraLines = [];     // accumulate lines of a paragraph
+
+  const flushPara = () => {
+    if (!paraLines.length) return;
+    out += `<p class="ai-p">${paraLines.join('<br>')}</p>`;
+    paraLines = [];
+  };
+  const closeList = () => {
+    if (listType) { out += `</${listType}>`; listType = ''; }
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // ATX heading: # … ######
+    const hm = trimmed.match(/^(#{1,6})\s+(.+)/);
+    if (hm) {
+      flushPara(); closeList();
+      // Map h1→h3, h2→h4, h3+→h5 so the AI narrative heading levels stay below the
+      // report's own h2 section headings.  Math.min(5) caps the shift at h5.
+      const lvl = Math.min(hm[1].length + 2, 5);
+      out += `<h${lvl} class="ai-h">${applyInline(escapeHtml(hm[2]))}</h${lvl}>`;
+      continue;
+    }
+
+    // Unordered list item: "- " or "* "
+    const bm = trimmed.match(/^[-*]\s+(.+)/);
+    if (bm) {
+      flushPara();
+      if (listType === 'ol') { out += '</ol>'; listType = ''; }
+      if (!listType) { out += '<ul class="ai-ul">'; listType = 'ul'; }
+      out += `<li>${applyInline(escapeHtml(bm[1]))}</li>`;
+      continue;
+    }
+
+    // Ordered list item: "1. " or "1) "
+    const om = trimmed.match(/^(\d+)[.)]\s+(.+)/);
+    if (om) {
+      flushPara();
+      if (listType === 'ul') { out += '</ul>'; listType = ''; }
+      if (!listType) { out += '<ol class="ai-ol">'; listType = 'ol'; }
+      out += `<li>${applyInline(escapeHtml(om[2]))}</li>`;
+      continue;
+    }
+
+    // Blank line — end current block
+    if (!trimmed) {
+      flushPara(); closeList();
+      continue;
+    }
+
+    // Plain text — close any open list, accumulate into paragraph
+    closeList();
+    paraLines.push(applyInline(escapeHtml(trimmed)));
+  }
+
+  flushPara(); closeList();
+  // Fallback: if no structured output was produced, return as plain paragraph
+  return out || `<p class="ai-p">${escapeHtml(String(text).trim())}</p>`;
+}
+
+// Splits an already-unescaped inline text segment into [{text, bold}] runs for DOCX.
+function parseMarkdownInlineToRuns(raw) {
+  const runs = [];
+  const re = /\*\*([^*]+)\*\*/g;
+  let last = 0, m;
+  while ((m = re.exec(raw)) !== null) {
+    if (m.index > last) runs.push({ text: raw.slice(last, m.index), bold: false });
+    runs.push({ text: m[1], bold: true });
+    last = m.index + m[0].length;
+  }
+  if (last < raw.length) runs.push({ text: raw.slice(last), bold: false });
+  return runs.length ? runs : [{ text: raw, bold: false }];
+}
+
+// Builds a DOCX <w:p> from mixed-bold runs.
+function docxParagraphRich(runs, style, color) {
+  const pStyle = style ? `<w:pStyle w:val="${style}"/>` : '';
+  const rXml = (runs || []).map(run => {
+    const bold = run.bold ? '<w:b/>' : '';
+    const col = color ? `<w:color w:val="${color}"/>` : '';
+    const rPr = (bold || col) ? `<w:rPr>${bold}${col}</w:rPr>` : '';
+    return `<w:r>${rPr}<w:t xml:space="preserve">${docxEscape(run.text || '')}</w:t></w:r>`;
+  }).join('');
+  return `<w:p><w:pPr>${pStyle}</w:pPr>${rXml}</w:p>`;
+}
+
+// Renders Markdown text into an array of DOCX <w:p> strings.
+// Headings → Heading2 style, bullets/ordered lists → bulleted paragraphs,
+// **bold** → inline bold run. All text is docxEscape'd via docxParagraphRich.
+function renderMarkdownToDocxParagraphs(text) {
+  if (!text || !String(text).trim()) return [];
+  const paras = [];
+  const lines = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  let pendingLines = [];
+
+  const flushPending = () => {
+    if (!pendingLines.length) return;
+    const combined = pendingLines.join(' ').trim();
+    if (combined) paras.push(docxParagraphRich(parseMarkdownInlineToRuns(combined)));
+    pendingLines = [];
+  };
+
+  // Strip markdown inline markers to plain text (for headings where we use docxParagraph style)
+  const stripInline = s => s.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Heading
+    const hm = trimmed.match(/^(#{1,6})\s+(.+)/);
+    if (hm) {
+      flushPending();
+      paras.push(docxParagraph(stripInline(hm[2]), 'Heading2'));
+      continue;
+    }
+
+    // Bullet
+    const bm = trimmed.match(/^[-*]\s+(.+)/);
+    if (bm) {
+      flushPending();
+      const runs = [{ text: '\u2022 ', bold: false }, ...parseMarkdownInlineToRuns(bm[1])];
+      paras.push(docxParagraphRich(runs));
+      continue;
+    }
+
+    // Ordered: capture number+delimiter and trailing content separately for consistency
+    const om = trimmed.match(/^(\d+[.)])\s+(.+)/);
+    if (om) {
+      flushPending();
+      const runs = [{ text: om[1] + ' ', bold: false }, ...parseMarkdownInlineToRuns(om[2])];
+      paras.push(docxParagraphRich(runs));
+      continue;
+    }
+
+    // Blank line
+    if (!trimmed) { flushPending(); continue; }
+
+    // Regular text
+    pendingLines.push(trimmed);
+  }
+
+  flushPending();
+  return paras;
+}
+
 function statusSeverityRank(status) {
   const meta = HEALTHCHECK_STATUS[status] || HEALTHCHECK_STATUS.INFO;
   return meta.priority;
@@ -4987,7 +5160,7 @@ function buildHealthcheckAiSectionHtml(report) {
   } else if (ai.state === 'FAILED') {
     body = `<div class="alert alert-warn"><strong>AI-assisted evaluation failed.</strong> ${escapeHtml(ai.error || 'The OpenAI request did not complete successfully.')}<br>The deterministic traffic-light report remains valid and complete.</div>`;
   } else if (ai.state === 'INCLUDED') {
-    body = `<div class="alert alert-info">This AI-assisted narrative should be reviewed by a qualified administrator.</div><div class="health-preview-card"><div class="health-preview-text">${escapeHtml(ai.text || '—').replace(/\n/g, '<br>')}</div></div>`;
+    body = `<div class="ai-advisory">⚠ This AI-assisted narrative should be reviewed by a qualified administrator before acting on any findings.</div><div class="health-preview-card"><div class="ai-narrative">${renderMarkdownToHtml(ai.text || '—')}</div></div>`;
   }
   return `<section>
     <h2>AI-assisted healthcheck evaluation</h2>
@@ -5234,8 +5407,12 @@ function docxParagraph(text, style, color) {
 
 function docxCell(text, width, fill, color) {
   const shading = fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : '';
-  const textColor = color ? `<w:rPr><w:color w:val="${color}"/></w:rPr>` : '';
-  return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shading}</w:tcPr><w:p><w:r>${textColor}<w:t xml:space="preserve">${docxEscape(text)}</w:t></w:r></w:p></w:tc>`;
+  // sz/szCs 18 = 9 pt (half-points); consistent compact table body size
+  const szAttr = '<w:sz w:val="18"/><w:szCs w:val="18"/>';
+  const textColor = color ? `<w:rPr><w:color w:val="${color}"/>${szAttr}</w:rPr>` : `<w:rPr>${szAttr}</w:rPr>`;
+  // 60 twips top/bottom, 80 twips left/right cell padding
+  const margins = '<w:tcMar><w:top w:w="60" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:bottom w:w="60" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tcMar>';
+  return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shading}${margins}</w:tcPr><w:p><w:r>${textColor}<w:t xml:space="preserve">${docxEscape(text)}</w:t></w:r></w:p></w:tc>`;
 }
 
 function docxTable(rows) {
@@ -5277,8 +5454,8 @@ function buildHealthcheckDocxBytes(report) {
     body.push(docxParagraph('The deterministic traffic-light report remains valid and complete.', null));
   }
   if (ai.state === 'INCLUDED') {
-    body.push(docxParagraph('This AI-assisted narrative should be reviewed by a qualified administrator.', null, '1D4ED8'));
-    ai.text.split(/\r?\n/).forEach(line => body.push(docxParagraph(line || ' ', null)));
+    body.push(docxParagraph('This AI-assisted narrative should be reviewed by a qualified administrator before acting on any findings.', null, '1D4ED8'));
+    renderMarkdownToDocxParagraphs(ai.text).forEach(p => body.push(p));
   }
   body.push(docxParagraph('Executive summary', 'Heading1'));
   (report.summaryBullets.length ? report.summaryBullets : ['No red or amber management-summary items were produced from the deterministic rule set.']).forEach(item => body.push(docxParagraph(`• ${item}`, null)));
@@ -5346,7 +5523,7 @@ function buildHealthcheckDocxBytes(report) {
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" mc:Ignorable="w14 wp14"><w:body>${body.join('')}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
   const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="10"/><w:qFormat/><w:rPr><w:b/><w:sz w:val="34"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:rPr><w:b/><w:color w:val="1A3A5C"/><w:sz w:val="28"/></w:rPr></w:style></w:styles>`;
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="10"/><w:qFormat/><w:rPr><w:b/><w:sz w:val="34"/><w:szCs w:val="34"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:spacing w:before="240" w:after="60"/><w:keepNext/></w:pPr><w:rPr><w:b/><w:color w:val="1A3A5C"/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:spacing w:before="160" w:after="40"/><w:keepNext/></w:pPr><w:rPr><w:b/><w:color w:val="374151"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style></w:styles>`;
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
   const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`;
   const docRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
