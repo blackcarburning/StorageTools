@@ -1173,6 +1173,8 @@ if (typeof parseDsmOutput !== 'function') {
     'A,B\n"(c) Copyright IBM Corp. 1990","2025"\nx,y',
     'A,B\n(c) Copyright IBM Corp. 1990,2025\nx,y',
     'A,B\n\ufeff\x01(c)\tCopyright IBM Corp. 1990\t,\t2025\nx,y',
+    'A,B\n(c) Copyright by IBM Corporation and other(s) 1990\t2020\nx,y',
+    'A,B\n"(c) Copyright by IBM Corporation and other(s) 1990","2020"\nx,y',
   ];
   const variantsOk = bannerVariants.every(text => {
     const parsed = parseDsmOutput(text, { columns: ['A', 'B'] });
@@ -1269,6 +1271,32 @@ if (typeof parseDsmOutput !== 'function') {
     const dbspace = imported['doc_03_dbspace.csv'];
     if (dbspace && dbspace.headers.join(',') === 'VOLUME_NAME,DBSPACE_NUM,FILE_SYSTEM' && dbspace.rows[0][0] === 'VOL001') ok('buildImportedState: SELECT * query uses schema metadata without losing data row');
     else fail(`buildImportedState: schema-backed SELECT * headers failed: ${JSON.stringify(dbspace)}`);
+
+    const nodesQuery = ALL_QUERIES.find(q => q.outputFile === 'doc_07_nodes.csv');
+    const nodeHeaderLine = nodesQuery && Array.isArray(nodesQuery.columns) ? nodesQuery.columns.join(',') : 'NODE_NAME,PLATFORM_NAME';
+    const nodesImported = buildImportedState({
+      'doc_07_nodes.csv': [
+        nodeHeaderLine,
+        'NODE1,AIX,,,,,,,,,,,,',
+        '"(c) Copyright by IBM Corporation and other(s) 1990","2020"',
+        'NODE2,LINUX,,,,,,,,,,,,',
+      ].join('\n'),
+    });
+    const nodes = nodesImported['doc_07_nodes.csv'];
+    if (nodes && nodes.rows.length === 2 && nodes.rows[0][0] === 'NODE1' && nodes.rows[1][0] === 'NODE2') ok('buildImportedState: split IBM Corporation copyright row is removed without losing node rows');
+    else fail(`buildImportedState: split IBM Corporation copyright row leaked into data: ${JSON.stringify(nodes)}`);
+
+    const prevImported = STATE.imported;
+    STATE.imported = nodesImported;
+    const wbNodes = { SheetNames: [], Sheets: {} };
+    const addNodesSheet = (ws, name) => { wbNodes.SheetNames.push(name); wbNodes.Sheets[name] = ws; };
+    buildSheet({ SheetNames: wbNodes.SheetNames, Sheets: wbNodes.Sheets, utils: { book_append_sheet: addNodesSheet } }, 'Nodes');
+    STATE.imported = prevImported;
+    const nodeSheetValues = Object.entries(wbNodes.Sheets.Nodes || {})
+      .filter(([addr]) => !addr.startsWith('!'))
+      .map(([, cell]) => String(cell && cell.v !== undefined ? cell.v : ''));
+    if (nodeSheetValues.includes('NODE1') && nodeSheetValues.includes('NODE2') && !nodeSheetValues.some(value => /Copyright by IBM Corporation and other\(s\)/i.test(value))) ok('XLSX report: Nodes sheet excludes split IBM Corporation copyright banner row');
+    else fail(`XLSX report: Nodes sheet still contains split copyright banner data: ${JSON.stringify(nodeSheetValues)}`);
   } else {
     fail('buildImportedState is not exported');
   }
