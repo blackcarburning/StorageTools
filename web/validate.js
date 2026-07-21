@@ -2800,6 +2800,113 @@ section('53. Archive import maps new fields correctly');
   if (mountImported && mountImported.headers.includes('DRIVE_COUNT') && mountImported.headers.includes('TOTAL_MOUNT_MINUTES')) ok('Import: hc_36_tape_mounts has correct headers');
   else fail('Import: hc_36_tape_mounts missing expected headers');
 }
+section('54. XLSX numeric coercion — IP addresses and mixed strings stay as text');
+if (typeof buildSheet !== 'function' || typeof ws_set !== 'function') {
+  fail('buildSheet/ws_set not exported — cannot run numeric-coercion tests');
+} else {
+  const serverQuery = ALL_QUERIES.find(q => q.section === 'Server');
+  if (!serverQuery) {
+    fail('No Server query found for numeric-coercion tests');
+  } else {
+    const coercionCases = [
+      // [value, expectedType, description]
+      // --- values that must stay as text ---
+      ['10.1.129.219',             's', 'IP address stays as text'],
+      ['1.2.3.4',                  's', 'four-octet IP address stays as text'],
+      ['2.0.0.1',                  's', 'dotted version-like string stays as text'],
+      ['1.2.3',                    's', 'three-segment dotted string stays as text'],
+      ['2026-01-15 12:34:56',          's', 'datetime string stays as text'],
+      ['2026-01-15 12:34:56.123456',   's', 'IBM SP timestamp (LASTACC_TIME/PWSET_TIME) stays as text'],
+      ['2026-01-15',                   's', 'date string stays as text'],
+      ['2026-07-21T09:10:20.223Z',     's', 'ISO 8601 timestamp stays as text'],
+      ['abc',                      's', 'plain text stays as text'],
+      ['',                         's', 'empty string stays as text'],
+      // --- values that must become numeric cells ---
+      ['10.1',                     'n', 'genuine decimal becomes numeric'],
+      ['42',                       'n', 'integer becomes numeric'],
+      ['-3.14',                    'n', 'negative decimal becomes numeric'],
+      ['+7',                       'n', 'explicitly signed integer becomes numeric'],
+      ['1.5e3',                    'n', 'scientific notation becomes numeric'],
+      ['1.5E-2',                   'n', 'scientific notation with negative exponent becomes numeric'],
+    ];
+
+    coercionCases.forEach(([value, expectedType, desc]) => {
+      STATE.imported = {};
+      STATE.imported[serverQuery.outputFile] = {
+        name: serverQuery.outputFile,
+        headers: ['VALUE'],
+        rows: [[value]],
+      };
+      const wb = { SheetNames: [], Sheets: {} };
+      buildSheet({ SheetNames: wb.SheetNames, Sheets: wb.Sheets, utils: { book_append_sheet: (ws, name) => { wb.SheetNames.push(name); wb.Sheets[name] = ws; } } }, 'Server');
+      const ws = wb.Sheets.Server;
+      // Sheet layout: A1=section title, A2=column header, A3=first data row
+      const dataCell = ws && ws['A3'];
+      if (!dataCell) {
+        fail(`Numeric coercion: missing data cell for ${JSON.stringify(value)}`);
+      } else if (dataCell.t === expectedType) {
+        ok(`Numeric coercion: ${desc}`);
+      } else {
+        fail(`Numeric coercion: ${desc} — expected type=${expectedType} but got type=${dataCell.t}, v=${JSON.stringify(dataCell.v)}`);
+      }
+    });
+
+    // Verify the specific IP address value is fully preserved (not truncated to 10.1)
+    STATE.imported = {};
+    STATE.imported[serverQuery.outputFile] = {
+      name: serverQuery.outputFile,
+      headers: ['HLA_ADDRESS'],
+      rows: [['10.1.129.219']],
+    };
+    const wbIp = { SheetNames: [], Sheets: {} };
+    buildSheet({ SheetNames: wbIp.SheetNames, Sheets: wbIp.Sheets, utils: { book_append_sheet: (ws, name) => { wbIp.SheetNames.push(name); wbIp.Sheets[name] = ws; } } }, 'Server');
+    const wsIp = wbIp.Sheets.Server;
+    const ipCell = wsIp && wsIp['A3'];
+    if (ipCell && ipCell.v === '10.1.129.219') ok('Numeric coercion: HLA address 10.1.129.219 is fully preserved (not truncated to 10.1)');
+    else fail(`Numeric coercion: HLA address should be "10.1.129.219" but got ${JSON.stringify(ipCell && ipCell.v)}`);
+
+    // Verify a backup-date timestamp is fully preserved (not truncated to the year)
+    STATE.imported = {};
+    STATE.imported[serverQuery.outputFile] = {
+      name: serverQuery.outputFile,
+      headers: ['LAST_BACKUP_DATE'],
+      rows: [['2026-01-15 12:34:56']],
+    };
+    const wbDate = { SheetNames: [], Sheets: {} };
+    buildSheet({ SheetNames: wbDate.SheetNames, Sheets: wbDate.Sheets, utils: { book_append_sheet: (ws, name) => { wbDate.SheetNames.push(name); wbDate.Sheets[name] = ws; } } }, 'Server');
+    const wsDate = wbDate.Sheets.Server;
+    const dateCell = wsDate && wsDate['A3'];
+    if (dateCell && dateCell.v === '2026-01-15 12:34:56') ok('Numeric coercion: backup date "2026-01-15 12:34:56" is fully preserved (not truncated to 2026)');
+    else fail(`Numeric coercion: backup date should be "2026-01-15 12:34:56" but got ${JSON.stringify(dateCell && dateCell.v)}`);
+
+    // Verify IBM SP admin timestamps (LASTACC_TIME / PWSET_TIME) are fully preserved
+    const adminsQuery = ALL_QUERIES.find(q => q.id === 'doc_06_admins');
+    if (!adminsQuery) {
+      fail('Numeric coercion: doc_06_admins query not found — cannot test LASTACC_TIME preservation');
+    } else {
+      STATE.imported = {};
+      STATE.imported[adminsQuery.outputFile] = {
+        name: adminsQuery.outputFile,
+        headers: ['ADMIN_NAME', 'LASTACC_TIME', 'PWSET_TIME'],
+        rows: [['ADMIN', '2026-01-15 12:34:56.123456', '2014-03-22 08:00:00.000000']],
+      };
+      const wbAdm = { SheetNames: [], Sheets: {} };
+      buildSheet({ SheetNames: wbAdm.SheetNames, Sheets: wbAdm.Sheets, utils: { book_append_sheet: (ws, name) => { wbAdm.SheetNames.push(name); wbAdm.Sheets[name] = ws; } } }, 'Admins');
+      const wsAdm = wbAdm.Sheets.Admins;
+      // Sheet layout: A1=section title, row 2=headers, A3=first data row
+      const lastaccCell = wsAdm && wsAdm['B3'];
+      if (lastaccCell && lastaccCell.v === '2026-01-15 12:34:56.123456')
+        ok('Numeric coercion: LASTACC_TIME "2026-01-15 12:34:56.123456" is fully preserved (not truncated to 2026)');
+      else
+        fail(`Numeric coercion: LASTACC_TIME should be "2026-01-15 12:34:56.123456" but got ${JSON.stringify(lastaccCell && lastaccCell.v)}`);
+      const pwsetCell = wsAdm && wsAdm['C3'];
+      if (pwsetCell && pwsetCell.v === '2014-03-22 08:00:00.000000')
+        ok('Numeric coercion: PWSET_TIME "2014-03-22 08:00:00.000000" is fully preserved (not truncated to 2014)');
+      else
+        fail(`Numeric coercion: PWSET_TIME should be "2014-03-22 08:00:00.000000" but got ${JSON.stringify(pwsetCell && pwsetCell.v)}`);
+    }
+  }
+}
 if (FAIL > 0) {
   console.error('VALIDATION FAILED');
   process.exit(1);
