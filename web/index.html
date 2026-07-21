@@ -775,11 +775,11 @@ const ALL_QUERIES = [
   // ── Activity / Health ────────────────────────────────────────────────────
   { id:'hc_18_actlog_errors', title:'Activity Log Errors/Warnings (48 hrs)', section:'Activity_Health',
     sql:"SELECT DATE_TIME,SEVERITY,MSGNO,MESSAGE,NODENAME,SERVERNAME,SCHEDNAME,DOMAINNAME,ORIGINATOR FROM ACTLOG WHERE SEVERITY IN ('W','E','S') AND DATE_TIME>=CURRENT_TIMESTAMP - 48 HOURS ORDER BY DATE_TIME DESC",
-    outputFile:'hc_18_actlog_errors.csv' },
+    outputFile:'hc_18_actlog_errors.csv', actlogSource:true },
 
   { id:'hc_19_actlog_severe', title:'Severe Activity Log Messages (7 days)', section:'Activity_Health',
     sql:"SELECT DATE_TIME,SEVERITY,MSGNO,MESSAGE,NODENAME,SERVERNAME,SCHEDNAME,DOMAINNAME FROM ACTLOG WHERE SEVERITY='S' AND DATE_TIME>=CURRENT_TIMESTAMP - 7 DAYS ORDER BY DATE_TIME DESC",
-    outputFile:'hc_19_actlog_severe.csv' },
+    outputFile:'hc_19_actlog_severe.csv', actlogSource:true },
 
   { id:'hc_20_summary_overview', title:'Summary Activity Overview (30 days)', section:'Activity_Health',
     sql:"SELECT ACTIVITY,SUCCESSFUL,COUNT(*) AS RUN_COUNT FROM SUMMARY WHERE START_TIME>=CURRENT_TIMESTAMP - 30 DAYS GROUP BY ACTIVITY,SUCCESSFUL ORDER BY ACTIVITY,SUCCESSFUL",
@@ -816,7 +816,7 @@ const ALL_QUERIES = [
   { id:'hc_35_scratch_warnings', title:'Scratch Tape Warning Messages (full actlog retention)', section:'Activity_Health',
     sql:"SELECT MSGNO,COUNT(*) AS WARNING_COUNT FROM ACTLOG WHERE MSGNO IN (692,1403,1404,1405,1407,3516,4583,6984,8945) GROUP BY MSGNO ORDER BY MSGNO",
     columns:['MSGNO','WARNING_COUNT'],
-    outputFile:'hc_35_scratch_warnings.csv' },
+    outputFile:'hc_35_scratch_warnings.csv', actlogSource:true },
 
   { id:'hc_36_tape_mounts', title:'Tape Mount Utilisation (168 hrs)', section:'Activity_Health',
     sql:"SELECT (SELECT COUNT(*) FROM DRIVES) AS DRIVE_COUNT,COALESCE(SUM((END_TIME-START_TIME) MINUTES),0) AS TOTAL_MOUNT_MINUTES,168 AS WINDOW_HOURS FROM SUMMARY WHERE ACTIVITY='TAPE MOUNT' AND START_TIME>CURRENT_TIMESTAMP-168 HOURS",
@@ -1852,6 +1852,9 @@ const IBM_COPYRIGHT_PREFIX_RE = new RegExp(`^\\(\\s*c\\s*\\)\\s*copyright\\s+${I
 const IBM_COPYRIGHT_YEAR_SUFFIX_RE = new RegExp(`^[,;:/-]?\\s*${IBM_COPYRIGHT_YEAR_PART}$`, 'i');
 // Handles known IBM no-match variants (colon/dash separator, spacing differences, criteria/criterion wording)
 const NO_MATCH_RECORD_RE = /^ANR2034E\b.*\bSELECT\b\s*[:\-]?\s*NO\s+MATCH\s+FOUND(?:\s+USING\s+THIS\s+CRITERI(?:A|ON))?\b.*$/i;
+// Broader no-match pattern used only for ACTLOG-sourced queries: catches "No match found" appearing
+// anywhere in the combined fields (e.g. when DATE_TIME precedes the ANR2034E message code in a CSV row).
+const ACTLOG_NO_MATCH_RE = /\bno\s+match\s+found\b/i;
 
 function normalizeNoiseFragment(value) {
   return normalizeImportedField(value)
@@ -1883,6 +1886,13 @@ function isNoMatchRecord(fields) {
   if (fragments.length === 0) return false;
   const text = fragments.join(' ').replace(/\s+/g, ' ').trim();
   return NO_MATCH_RECORD_RE.test(text);
+}
+
+function isActlogNoMatchRecord(fields) {
+  const fragments = normalizedNoiseFragments(fields);
+  if (fragments.length === 0) return false;
+  const text = fragments.join(' ').replace(/\s+/g, ' ').trim();
+  return ACTLOG_NO_MATCH_RE.test(text);
 }
 
 /**
@@ -1930,11 +1940,15 @@ function parseDsmOutput(text, query) {
   const lines = text.split(/\r?\n/);
   const records = [];
   const expectedHeaders = query && Array.isArray(query.columns) && query.columns.length > 0 ? query.columns.slice() : null;
+  const actlogSource = !!(query && query.actlogSource);
 
   for (const line of lines) {
     if (!line || !line.trim()) continue;
     const fields = parseCsvLine(line).map(normalizeImportedField);
     if (isNoMatchRecord(fields)) {
+      continue;
+    }
+    if (actlogSource && isActlogNoMatchRecord(fields)) {
       continue;
     }
     if (isAdministrativeNoiseRecord(fields)) {
