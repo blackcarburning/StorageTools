@@ -3460,7 +3460,8 @@ function renderMarkdownToHtml(text) {
     const hm = trimmed.match(/^(#{1,6})\s+(.+)/);
     if (hm) {
       flushPara(); closeList();
-      // Map h1→h3, h2→h4, h3+→h5 so the AI narrative sits below the report's h2 headings
+      // Map h1→h3, h2→h4, h3+→h5 so the AI narrative heading levels stay below the
+      // report's own h2 section headings.  Math.min(5) caps the shift at h5.
       const lvl = Math.min(hm[1].length + 2, 5);
       out += `<h${lvl} class="ai-h">${applyInline(escapeHtml(hm[2]))}</h${lvl}>`;
       continue;
@@ -3567,11 +3568,11 @@ function renderMarkdownToDocxParagraphs(text) {
       continue;
     }
 
-    // Ordered
-    const om = trimmed.match(/^(\d+[.)]\s+)(.+)/);
+    // Ordered: capture number+delimiter and trailing content separately for consistency
+    const om = trimmed.match(/^(\d+[.)])\s+(.+)/);
     if (om) {
       flushPending();
-      const runs = [{ text: om[1], bold: false }, ...parseMarkdownInlineToRuns(om[2])];
+      const runs = [{ text: om[1] + ' ', bold: false }, ...parseMarkdownInlineToRuns(om[2])];
       paras.push(docxParagraphRich(runs));
       continue;
     }
