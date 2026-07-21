@@ -1845,8 +1845,9 @@ function normalizedRecordText(fields) {
 }
 
 const IBM_COPYRIGHT_YEAR_PART = '(?:19|20)\\d{2}';
-const IBM_COPYRIGHT_FULL_RE = new RegExp(`^\\(\\s*c\\s*\\)\\s*copyright\\s+ibm\\s+corp\\.?\\s+${IBM_COPYRIGHT_YEAR_PART}(?:\\s*[,;:/-]?\\s*${IBM_COPYRIGHT_YEAR_PART})?$`, 'i');
-const IBM_COPYRIGHT_PREFIX_RE = new RegExp(`^\\(\\s*c\\s*\\)\\s*copyright\\s+ibm\\s+corp\\.?\\s+${IBM_COPYRIGHT_YEAR_PART}$`, 'i');
+const IBM_COPYRIGHT_OWNER_PART = '(?:by\\s+)?ibm\\s+(?:corp(?:oration)?\\.?|corporation)(?:\\s+and\\s+other(?:\\(s\\)|s)?)?';
+const IBM_COPYRIGHT_FULL_RE = new RegExp(`^\\(\\s*c\\s*\\)\\s*copyright\\s+${IBM_COPYRIGHT_OWNER_PART}\\s+${IBM_COPYRIGHT_YEAR_PART}(?:\\s*[,;:/-]?\\s*${IBM_COPYRIGHT_YEAR_PART})?$`, 'i');
+const IBM_COPYRIGHT_PREFIX_RE = new RegExp(`^\\(\\s*c\\s*\\)\\s*copyright\\s+${IBM_COPYRIGHT_OWNER_PART}\\s+${IBM_COPYRIGHT_YEAR_PART}$`, 'i');
 const IBM_COPYRIGHT_YEAR_SUFFIX_RE = new RegExp(`^[,;:/-]?\\s*${IBM_COPYRIGHT_YEAR_PART}$`, 'i');
 // Handles known IBM no-match variants (colon/dash separator, spacing differences, criteria/criterion wording)
 const NO_MATCH_RECORD_RE = /^ANR2034E\b.*\bSELECT\b\s*[:\-]?\s*NO\s+MATCH\s+FOUND(?:\s+USING\s+THIS\s+CRITERI(?:A|ON))?\b.*$/i;
