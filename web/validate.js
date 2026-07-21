@@ -2355,8 +2355,12 @@ section('42. New collection field coverage in queries');
   else fail('doc_09_nodes_version SQL missing aggregated MOST_RECENT_LASTACC_TIME');
 
   const notBackedUpQ = ALL_QUERIES.find(q => q.id === 'hc_13_not_backed_up');
-  if (notBackedUpQ && /LEFT JOIN NODES N ON N\.NODE_NAME=F\.NODE_NAME/i.test(notBackedUpQ.sql) && /LASTACC_TIME/.test(notBackedUpQ.sql)) ok('hc_13_not_backed_up SQL joins NODES for LASTACC_TIME');
-  else fail('hc_13_not_backed_up SQL missing NODES join for LASTACC_TIME');
+  if (notBackedUpQ && /SELECT DISTINCT F\.NODE_NAME,N\.LASTACC_TIME FROM FILESPACES F,NODES N/i.test(notBackedUpQ.sql)) ok('hc_13_not_backed_up SQL uses compatible direct-join DISTINCT form');
+  else fail('hc_13_not_backed_up SQL missing compatible direct-join DISTINCT form');
+  if (notBackedUpQ && !/\(\s*SELECT .* FROM FILESPACES/i.test(notBackedUpQ.sql)) ok('hc_13_not_backed_up SQL has no derived-table subquery');
+  else fail('hc_13_not_backed_up SQL still contains failing derived-table subquery');
+  if (notBackedUpQ && !/LEFT JOIN NODES/i.test(notBackedUpQ.sql)) ok('hc_13_not_backed_up SQL has no LEFT JOIN NODES');
+  else fail('hc_13_not_backed_up SQL still contains failing LEFT JOIN NODES pattern');
   if (notBackedUpQ && Array.isArray(notBackedUpQ.columns) && notBackedUpQ.columns.join(',') === 'NODE_NAME,LASTACC_TIME') ok('hc_13_not_backed_up columns metadata includes LASTACC_TIME');
   else fail('hc_13_not_backed_up columns metadata missing LASTACC_TIME');
 
@@ -2367,8 +2371,14 @@ section('42. New collection field coverage in queries');
   else fail('hc_14_never_contacted columns metadata missing LASTACC_TIME');
 
   const noReplQ = ALL_QUERIES.find(q => q.id === 'hc_17_no_repl_start');
-  if (noReplQ && /LEFT JOIN NODES N ON N\.NODE_NAME=F\.NODE_NAME/i.test(noReplQ.sql) && /LASTACC_TIME/.test(noReplQ.sql)) ok('hc_17_no_repl_start SQL joins NODES for LASTACC_TIME');
-  else fail('hc_17_no_repl_start SQL missing NODES join for LASTACC_TIME');
+  if (noReplQ && /SELECT DISTINCT F\.NODE_NAME,N\.LASTACC_TIME FROM FILESPACES F,NODES N/i.test(noReplQ.sql)) ok('hc_17_no_repl_start SQL uses compatible direct-join DISTINCT form');
+  else fail('hc_17_no_repl_start SQL missing compatible direct-join DISTINCT form');
+  if (noReplQ && !/\(\s*SELECT .* FROM FILESPACES/i.test(noReplQ.sql)) ok('hc_17_no_repl_start SQL has no derived-table subquery');
+  else fail('hc_17_no_repl_start SQL still contains failing derived-table subquery');
+  if (noReplQ && !/LEFT JOIN NODES/i.test(noReplQ.sql)) ok('hc_17_no_repl_start SQL has no LEFT JOIN NODES');
+  else fail('hc_17_no_repl_start SQL still contains failing LEFT JOIN NODES pattern');
+  if (noReplQ && Array.isArray(noReplQ.columns) && noReplQ.columns.join(',') === 'NODE_NAME,LASTACC_TIME') ok('hc_17_no_repl_start columns metadata includes LASTACC_TIME');
+  else fail('hc_17_no_repl_start columns metadata missing LASTACC_TIME');
 }
 
 section('42. Scratch warnings query correctness');
@@ -2958,6 +2968,29 @@ if (typeof buildSheet !== 'function' || typeof ws_set !== 'function') {
         fail(`Numeric coercion: PWSET_TIME should be "2014-03-22 08:00:00.000000" but got ${JSON.stringify(pwsetCell && pwsetCell.v)}`);
     }
   }
+}
+section('55. IBM SP SQL regression — hc_13 and hc_17 use compatible direct-join form');
+{
+  const cmd = generateCmdContent();
+  const sh  = generateShContent();
+  // CMD must NOT contain the failing derived-table + LEFT JOIN pattern for these two queries
+  if (!cmd.includes('(SELECT DISTINCT NODE_NAME FROM FILESPACES WHERE BACKUP_END')) ok('CMD hc_13_not_backed_up: no derived-table subquery');
+  else fail('CMD hc_13_not_backed_up: still contains failing derived-table subquery');
+  if (!sh.includes('(SELECT DISTINCT NODE_NAME FROM FILESPACES WHERE BACKUP_END')) ok('SH hc_13_not_backed_up: no derived-table subquery');
+  else fail('SH hc_13_not_backed_up: still contains failing derived-table subquery');
+  if (!cmd.includes('(SELECT DISTINCT NODE_NAME FROM FILESPACES WHERE LAST_REPL_START_1')) ok('CMD hc_17_no_repl_start: no derived-table subquery');
+  else fail('CMD hc_17_no_repl_start: still contains failing derived-table subquery');
+  if (!sh.includes('(SELECT DISTINCT NODE_NAME FROM FILESPACES WHERE LAST_REPL_START_1')) ok('SH hc_17_no_repl_start: no derived-table subquery');
+  else fail('SH hc_17_no_repl_start: still contains failing derived-table subquery');
+  // CMD and SH must contain the corrected compatible SQL
+  if (cmd.includes('SELECT DISTINCT F.NODE_NAME,N.LASTACC_TIME FROM FILESPACES F,NODES N WHERE F.NODE_NAME=N.NODE_NAME AND F.BACKUP_END')) ok('CMD hc_13_not_backed_up: contains compatible direct-join SQL');
+  else fail('CMD hc_13_not_backed_up: missing compatible direct-join SQL');
+  if (sh.includes('SELECT DISTINCT F.NODE_NAME,N.LASTACC_TIME FROM FILESPACES F,NODES N WHERE F.NODE_NAME=N.NODE_NAME AND F.BACKUP_END')) ok('SH hc_13_not_backed_up: contains compatible direct-join SQL');
+  else fail('SH hc_13_not_backed_up: missing compatible direct-join SQL');
+  if (cmd.includes('SELECT DISTINCT F.NODE_NAME,N.LASTACC_TIME FROM FILESPACES F,NODES N WHERE F.NODE_NAME=N.NODE_NAME AND F.LAST_REPL_START_1')) ok('CMD hc_17_no_repl_start: contains compatible direct-join SQL');
+  else fail('CMD hc_17_no_repl_start: missing compatible direct-join SQL');
+  if (sh.includes('SELECT DISTINCT F.NODE_NAME,N.LASTACC_TIME FROM FILESPACES F,NODES N WHERE F.NODE_NAME=N.NODE_NAME AND F.LAST_REPL_START_1')) ok('SH hc_17_no_repl_start: contains compatible direct-join SQL');
+  else fail('SH hc_17_no_repl_start: missing compatible direct-join SQL');
 }
 if (FAIL > 0) {
   console.error('VALIDATION FAILED');
