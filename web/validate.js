@@ -2815,9 +2815,10 @@ if (typeof buildSheet !== 'function' || typeof ws_set !== 'function') {
       ['1.2.3.4',                  's', 'four-octet IP address stays as text'],
       ['2.0.0.1',                  's', 'dotted version-like string stays as text'],
       ['1.2.3',                    's', 'three-segment dotted string stays as text'],
-      ['2026-01-15 12:34:56',      's', 'datetime string stays as text'],
-      ['2026-01-15',               's', 'date string stays as text'],
-      ['2026-07-21T09:10:20.223Z', 's', 'ISO 8601 timestamp stays as text'],
+      ['2026-01-15 12:34:56',          's', 'datetime string stays as text'],
+      ['2026-01-15 12:34:56.123456',   's', 'IBM SP timestamp (LASTACC_TIME/PWSET_TIME) stays as text'],
+      ['2026-01-15',                   's', 'date string stays as text'],
+      ['2026-07-21T09:10:20.223Z',     's', 'ISO 8601 timestamp stays as text'],
       ['abc',                      's', 'plain text stays as text'],
       ['',                         's', 'empty string stays as text'],
       // --- values that must become numeric cells ---
@@ -2877,6 +2878,33 @@ if (typeof buildSheet !== 'function' || typeof ws_set !== 'function') {
     const dateCell = wsDate && wsDate['A3'];
     if (dateCell && dateCell.v === '2026-01-15 12:34:56') ok('Numeric coercion: backup date "2026-01-15 12:34:56" is fully preserved (not truncated to 2026)');
     else fail(`Numeric coercion: backup date should be "2026-01-15 12:34:56" but got ${JSON.stringify(dateCell && dateCell.v)}`);
+
+    // Verify IBM SP admin timestamps (LASTACC_TIME / PWSET_TIME) are fully preserved
+    const adminsQuery = ALL_QUERIES.find(q => q.id === 'doc_06_admins');
+    if (!adminsQuery) {
+      fail('Numeric coercion: doc_06_admins query not found — cannot test LASTACC_TIME preservation');
+    } else {
+      STATE.imported = {};
+      STATE.imported[adminsQuery.outputFile] = {
+        name: adminsQuery.outputFile,
+        headers: ['ADMIN_NAME', 'LASTACC_TIME', 'PWSET_TIME'],
+        rows: [['ADMIN', '2026-01-15 12:34:56.123456', '2014-03-22 08:00:00.000000']],
+      };
+      const wbAdm = { SheetNames: [], Sheets: {} };
+      buildSheet({ SheetNames: wbAdm.SheetNames, Sheets: wbAdm.Sheets, utils: { book_append_sheet: (ws, name) => { wbAdm.SheetNames.push(name); wbAdm.Sheets[name] = ws; } } }, 'Admins');
+      const wsAdm = wbAdm.Sheets.Admins;
+      // Sheet layout: A1=section title, row 2=headers, A3=first data row
+      const lastaccCell = wsAdm && wsAdm['B3'];
+      if (lastaccCell && lastaccCell.v === '2026-01-15 12:34:56.123456')
+        ok('Numeric coercion: LASTACC_TIME "2026-01-15 12:34:56.123456" is fully preserved (not truncated to 2026)');
+      else
+        fail(`Numeric coercion: LASTACC_TIME should be "2026-01-15 12:34:56.123456" but got ${JSON.stringify(lastaccCell && lastaccCell.v)}`);
+      const pwsetCell = wsAdm && wsAdm['C3'];
+      if (pwsetCell && pwsetCell.v === '2014-03-22 08:00:00.000000')
+        ok('Numeric coercion: PWSET_TIME "2014-03-22 08:00:00.000000" is fully preserved (not truncated to 2014)');
+      else
+        fail(`Numeric coercion: PWSET_TIME should be "2014-03-22 08:00:00.000000" but got ${JSON.stringify(pwsetCell && pwsetCell.v)}`);
+    }
   }
 }
 if (FAIL > 0) {
