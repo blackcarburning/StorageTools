@@ -37,7 +37,7 @@ Download exactly one of the unified script types:
 - **Download Complete CMD**
 - **Download Complete SH**
 
-Both formats run the same canonical collection of **78 queries**, package all results into one `.tar` archive inside the configured output folder, and retain all collected CSV files in that folder alongside the archive.
+Both formats run the same canonical collection of **80 queries**, package all results into one `.tar` archive inside the configured output folder, and retain all collected CSV files in that folder alongside the archive.
 
 Generated filenames:
 - `StorageTools_Complete_<SERVER>.cmd`
@@ -296,8 +296,8 @@ StorageTools automatically filters these banner lines before header detection an
 
 | File | Description |
 |------|-------------|
-| `StorageTools_Complete_<SERVER>.cmd` | Windows complete collection script (78 queries) |
-| `StorageTools_Complete_<SERVER>.sh` | Unix/Linux complete collection script (78 queries) |
+| `StorageTools_Complete_<SERVER>.cmd` | Windows complete collection script (80 queries) |
+| `StorageTools_Complete_<SERVER>.sh` | Unix/Linux complete collection script (80 queries) |
 | `StorageTools_Complete_<SERVER>_<TIMESTAMP>.tar` | Single portable archive: all CSV results + `collection_log.txt` + `collection_errors.log` + `manifest.txt` |
 | `StorageTools_Complete_Report_<CUSTOMER>_<SERVER>_<DATE>.xlsx` | Unified workbook including Collection_Log and Collection_Errors sheets |
 | `StorageTools_Healthcheck_Report_<CUSTOMER>_<SERVER>_<DATE>.docx` | Traffic-light healthcheck report exported from the imported archive, including the dedicated AI-assisted evaluation section and its final state metadata |
