@@ -727,6 +727,11 @@ const ALL_QUERIES = [
     sql:"SELECT * FROM REPLSERVERS ORDER BY 1",
     outputFile:'doc_33_repl_servers.csv' },
 
+  { id:'doc_43_node_repl_status', title:'Node Replication Status', section:'Replication', v8only:true, warnIfMissing:true,
+    sql:"SELECT NODE_NAME,REPL_MODE,REPL_STATE,REPL_BKRULE,REPL_ARRULE,REPL_SPRULE FROM NODES WHERE COALESCE(REPL_MODE,'')<>'' OR COALESCE(REPL_STATE,'')<>'' OR COALESCE(REPL_BKRULE,'')<>'' OR COALESCE(REPL_ARRULE,'')<>'' OR COALESCE(REPL_SPRULE,'')<>'' ORDER BY NODE_NAME",
+    columns:['NODE_NAME','REPL_MODE','REPL_STATE','REPL_BKRULE','REPL_ARRULE','REPL_SPRULE'],
+    outputFile:'doc_43_node_repl_status.csv' },
+
   { id:'doc_37_stgrules', title:'Storage/Replication Rules', section:'Replication', v8only:true, warnIfMissing:true,
     sql:"SELECT RULENAME,TGTPOOL,TYPE,DELAY,MAXPROCESS,TGTTYPE,DURATION,STARTTIME,DESCRIPTION,ACTIVE,SRCPOOL,NODELIST,FSLIST,NAMETYPE,CODETYPE,LASTEXETIME,PCTUNUSED,AUDITTYPE,AUDITLEVEL,MAXSESSIONS,TRANSFERMETHOD FROM STGRULES ORDER BY RULENAME",
     columns:['RULENAME','TGTPOOL','TYPE','DELAY','MAXPROCESS','TGTTYPE','DURATION','STARTTIME','DESCRIPTION','ACTIVE','SRCPOOL','NODELIST','FSLIST','NAMETYPE','CODETYPE','LASTEXETIME','PCTUNUSED','AUDITTYPE','AUDITLEVEL','MAXSESSIONS','TRANSFERMETHOD'],
@@ -735,6 +740,11 @@ const ALL_QUERIES = [
   { id:'hc_27_repl_stats', title:'Storage Pool Protection Stats (30 days)', section:'Replication',
     sql:"SELECT DATE(END_TIME) AS END_DATE,ENTITY AS STGPOOL,SUCCESSFUL,COUNT(*) AS RUN_COUNT,CAST(SUM(BYTES)/1024/1024/1024 AS DECIMAL(12,2)) AS TOTAL_GB FROM SUMMARY WHERE ACTIVITY='STGPOOL PROTECTION' AND END_TIME>=CURRENT_TIMESTAMP - 30 DAYS GROUP BY DATE(END_TIME),ENTITY,SUCCESSFUL ORDER BY END_DATE DESC",
     outputFile:'hc_27_repl_stats.csv' },
+
+  { id:'hc_37_node_repl_24h', title:'Node Replication Activity (24 hours)', section:'Replication', v8only:true, warnIfMissing:true,
+    sql:"SELECT NODE_NAME,START_TIME,END_TIME,COMP_STATE,COMP_REASON,BKSERVER,ARSERVER,SMSERVER FROM REPLICATIONVIEW WHERE END_TIME>=CURRENT_TIMESTAMP - 24 HOURS ORDER BY END_TIME DESC,NODE_NAME",
+    columns:['NODE_NAME','START_TIME','END_TIME','COMP_STATE','COMP_REASON','BKSERVER','ARSERVER','SMSERVER'],
+    outputFile:'hc_37_node_repl_24h.csv' },
 
   // ── DR ───────────────────────────────────────────────────────────────────
   { id:'doc_34_drm_status', title:'DRM Status', section:'DR',
@@ -3038,6 +3048,294 @@ function defaultReportFilename(meta) {
   return sanitizeXlsxFilename(`StorageTools_Complete_Report_${customer}_${server}_${date}`, 'StorageTools_Complete_Report');
 }
 
+function dedupeSortValues(values) {
+  const keyed = new Map();
+  (values || []).forEach(value => {
+    const text = String(value == null ? '' : value).trim();
+    if (!text) return;
+    const key = text.toUpperCase();
+    if (!keyed.has(key)) keyed.set(key, text);
+  });
+  return Array.from(keyed.values()).sort((a, b) => a.localeCompare(b, undefined, { sensitivity:'base' }));
+}
+
+function formatGiB(value) {
+  const num = parseNumberValue(value);
+  return num == null ? 'Not available' : `${num.toFixed(2)} GiB`;
+}
+
+function formatMiBAsGiB(value) {
+  const num = parseNumberValue(value);
+  return num == null ? 'Not available' : `${(num / 1024).toFixed(2)} GiB`;
+}
+
+function sumFieldNumbers(rows, getter) {
+  let total = 0;
+  let found = false;
+  (rows || []).forEach(row => {
+    const value = typeof getter === 'function' ? getter(row) : null;
+    const num = parseNumberValue(value);
+    if (num == null) return;
+    total += num;
+    found = true;
+  });
+  return found ? total : null;
+}
+
+function classifyReplicationCompletionState(state, reason) {
+  const normalizedState = String(state == null ? '' : state).trim().toUpperCase();
+  const normalizedReason = String(reason == null ? '' : reason).trim().toUpperCase();
+  if (/(FAIL|ERROR|INCOMPLETE|PARTIAL|CANCEL|ABORT|STOP)/.test(normalizedState)) return 'FAILURE';
+  if (normalizedReason && !/^(NONE|SUCCESS|COMPLETED?)$/.test(normalizedReason)) return 'FAILURE';
+  if (/(COMPLETE|SUCCESS)/.test(normalizedState) && !/(INCOMPLETE|UNSUCCESS|FAIL)/.test(normalizedState)) return 'SUCCESS';
+  return '';
+}
+
+function countDistinctRecentDbBackupEvents(ctx) {
+  const backupRows = ctx.rows('hc_02_db_backups.csv');
+  if (!backupRows) return null;
+  const cutoff = ctx.referenceDate.getTime() - (24 * 3600000);
+  const events = new Set();
+  backupRows.forEach(row => {
+    const type = String(ctx.getField(row, 'TYPE')).trim().toUpperCase();
+    if (!['BACKUPFULL', 'BACKUPINCR', 'BACKUPDELTA'].includes(type)) return;
+    const when = parseDateValue(ctx.getField(row, 'DATE_TIME'));
+    if (!when) return;
+    const ts = when.getTime();
+    if (ts > ctx.referenceDate.getTime() || ts < cutoff) return;
+    const series = String(ctx.getField(row, 'BACKUP_SERIES')).trim();
+    events.add(series ? `${type}::${series}` : `${type}::${when.toISOString()}`);
+  });
+  return events.size;
+}
+
+function cloneImportedSnapshot(imported) {
+  return JSON.parse(JSON.stringify(imported || {}));
+}
+
+/*
+ * Canonical environment-statistics model shared by the report cover sheet and
+ * the healthcheck DOCX cover. Sources are imported CSV datasets, not rendered
+ * text, so both exports stay synchronized.
+ *
+ * Key derivations:
+ * - Database paths prefer DBSPACE FILE_SYSTEM / LOCATION fields; VOLUME_NAME is
+ *   not treated as a filesystem path.
+ * - Database backup counts deduplicate VOLHISTORY rows by BACKUP_SERIES when
+ *   available so multi-volume backup events are not double-counted.
+ * - Unique nodes follows the legacy healthcheck meaning: unique non-blank
+ *   TCP_ADDRESS values.
+ * - Logical copy occupancy is interpreted as copy-pool logical occupancy.
+ * - Replication source/target roles use explicit replication fields
+ *   (NODES.REPL_MODE and REPLSERVERS metadata) rather than display text.
+ */
+function deriveEnvironmentStatisticsModel(stateLike, reportMeta) {
+  const ctx = createHealthcheckContext(stateLike || STATE);
+  const meta = reportMeta || {};
+  const statusRow = ctx.firstRow('doc_01_status.csv');
+  const dbRow = ctx.firstRow('doc_02_db.csv');
+  const dbspaceRows = ctx.rows('doc_03_dbspace.csv');
+  const uniqueDbspaceRows = dbspaceRows ? Array.from(new Map(dbspaceRows.map(row => {
+    const key = [
+      ctx.getField(row, 'VOLUME_NAME'),
+      ctx.getField(row, 'FILE_SYSTEM', 'LOCATION'),
+      ctx.getField(row, 'CAPACITY_MB', 'TOTAL_FS_SIZE_MB')
+    ].map(part => String(part || '').trim().toUpperCase()).join('::');
+    return [key, row];
+  })).values()) : null;
+  const logRow = ctx.firstRow('doc_04_log.csv');
+  const libraryData = ctx.getData('doc_22_libraries.csv');
+  const libraryRows = ctx.rows('doc_22_libraries.csv');
+  const driveRows = ctx.rows('doc_23_drives.csv');
+  const libVolumeRows = ctx.rows('doc_27_libvols_summary.csv');
+  const occupancyRows = ctx.rows('doc_30_occ_by_pool.csv');
+  const nodeData = ctx.getData('doc_07_nodes.csv');
+  const nodeRows = ctx.rows('doc_07_nodes.csv');
+  const replServerData = ctx.getData('doc_33_repl_servers.csv');
+  const replServerRows = ctx.rows('doc_33_repl_servers.csv');
+  const replNodeData = ctx.getData('doc_43_node_repl_status.csv');
+  const replNodeRows = ctx.rows('doc_43_node_repl_status.csv');
+  const repl24hData = ctx.getData('hc_37_node_repl_24h.csv');
+  const repl24hRows = ctx.rows('hc_37_node_repl_24h.csv');
+  const localServerName = String(ctx.getField(statusRow, 'SERVER_NAME') || meta.server || '').trim();
+
+  const dbPathValues = dedupeSortValues((uniqueDbspaceRows || []).map(row => ctx.getField(row, 'FILE_SYSTEM', 'LOCATION')));
+  const dbCapacityMiB = sumFieldNumbers(uniqueDbspaceRows, row => ctx.getField(row, 'CAPACITY_MB', 'TOTAL_FS_SIZE_MB'));
+  const libraryNames = dedupeSortValues((libraryRows || []).map(row => ctx.getField(row, 'LIBRARY_NAME')));
+
+  let libraryPrivateCount = null;
+  let libraryScratchCount = null;
+  let totalDrives = null;
+  if (libraryData) {
+    if (!libraryRows || libraryRows.length === 0) {
+      libraryPrivateCount = 'N/A';
+      libraryScratchCount = 'N/A';
+      totalDrives = 'N/A';
+    } else {
+      const driveKeys = new Set((driveRows || []).map(row => `${ctx.getField(row, 'LIBRARY_NAME')}::${ctx.getField(row, 'DRIVE_NAME')}`));
+      totalDrives = driveRows ? String(driveKeys.size) : 'Not available';
+      let privateTotal = 0;
+      let scratchTotal = 0;
+      (libVolumeRows || []).forEach(row => {
+        const status = String(ctx.getField(row, 'STATUS')).trim().toUpperCase();
+        const count = parseNumberValue(ctx.getField(row, 'VOL_COUNT')) || 0;
+        if (status === 'PRIVATE') privateTotal += count;
+        if (status === 'SCRATCH') scratchTotal += count;
+      });
+      libraryPrivateCount = libVolumeRows ? String(privateTotal) : 'Not available';
+      libraryScratchCount = libVolumeRows ? String(scratchTotal) : 'Not available';
+    }
+  }
+
+  let primaryPhysical = 'Not available';
+  let primaryLogical = 'Not available';
+  let copyPhysical = 'Not available';
+  let copyLogical = 'Not available';
+  if (occupancyRows) {
+    const primaryRows = occupancyRows.filter(row => String(ctx.getField(row, 'POOLTYPE')).trim().toUpperCase() === 'PRIMARY');
+    const copyRows = occupancyRows.filter(row => String(ctx.getField(row, 'POOLTYPE')).trim().toUpperCase() === 'COPY');
+    primaryPhysical = formatGiB(sumFieldNumbers(primaryRows, row => ctx.getField(row, 'PHYSICAL_GB')));
+    primaryLogical = formatGiB(sumFieldNumbers(primaryRows, row => ctx.getField(row, 'LOGICAL_GB')));
+    copyPhysical = formatGiB(sumFieldNumbers(copyRows, row => ctx.getField(row, 'PHYSICAL_GB')));
+    copyLogical = formatGiB(sumFieldNumbers(copyRows, row => ctx.getField(row, 'LOGICAL_GB')));
+  }
+
+  const nodeAddressValue = (() => {
+    if (!nodeData) return 'Not available';
+    const hasTcpAddress = Array.isArray(nodeData.headers) && nodeData.headers.some(h => canonicalHeaderName(h) === 'TCPADDRESS');
+    if (!hasTcpAddress) return 'Not available';
+    return String(new Set((nodeRows || [])
+      .map(row => String(ctx.getField(row, 'TCP_ADDRESS')).trim())
+      .filter(value => value && value.toUpperCase() !== 'NULL')).size);
+  })();
+
+  const replPartnerNames = dedupeSortValues([
+    ...((replServerRows || []).map(row => ctx.getField(row, 'TARGET_REPL_SERVER_NAME', 'SERVER_NAME'))),
+    ...((repl24hRows || []).flatMap(row => [ctx.getField(row, 'BKSERVER'), ctx.getField(row, 'ARSERVER'), ctx.getField(row, 'SMSERVER')]))
+  ].filter(name => {
+    const text = String(name || '').trim();
+    return text && (!localServerName || text.toUpperCase() !== localServerName.toUpperCase());
+  }));
+
+  let replicationConfigured = 'Not available';
+  let replicationConfiguredState = 'unknown';
+  if (replServerData || replNodeData || repl24hData) {
+    const configured = (replServerRows && replServerRows.length > 0)
+      || (replNodeRows && replNodeRows.length > 0)
+      || (repl24hRows && repl24hRows.length > 0);
+    replicationConfigured = configured ? 'Yes' : 'No';
+    replicationConfiguredState = configured ? 'yes' : 'no';
+  }
+
+  let replicationSource = 'Not available';
+  let replicationTarget = 'Not available';
+  let replicationSuccess24h = 'Not available';
+  let replicationFailed24h = 'Not available';
+  let replicationPartners = 'Not available';
+
+  if (replicationConfiguredState === 'no') {
+    replicationSource = 'N/A';
+    replicationTarget = 'N/A';
+    replicationSuccess24h = 'N/A';
+    replicationFailed24h = 'N/A';
+    replicationPartners = 'N/A';
+  } else if (replicationConfiguredState === 'yes') {
+    replicationPartners = replPartnerNames.length ? replPartnerNames.join(', ') : (replServerData || repl24hData ? 'Not available' : 'N/A');
+    if (repl24hRows) {
+      const successNodes = new Set();
+      const failedNodes = new Set();
+      repl24hRows.forEach(row => {
+        const nodeName = String(ctx.getField(row, 'NODE_NAME')).trim();
+        if (!nodeName) return;
+        const outcome = classifyReplicationCompletionState(ctx.getField(row, 'COMP_STATE'), ctx.getField(row, 'COMP_REASON'));
+        if (outcome === 'SUCCESS') successNodes.add(nodeName.toUpperCase());
+        if (outcome === 'FAILURE') failedNodes.add(nodeName.toUpperCase());
+      });
+      replicationSuccess24h = String(successNodes.size);
+      replicationFailed24h = String(failedNodes.size);
+    }
+    if (replNodeRows) {
+      const sourceConfigured = replNodeRows.some(row => /SEND/.test(String(ctx.getField(row, 'REPL_MODE')).toUpperCase()))
+        || (replServerRows || []).some(row => String(ctx.getField(row, 'TARGET_REPL_SERVER_NAME')).trim());
+      const targetConfigured = replNodeRows.some(row => /RECEIVE/.test(String(ctx.getField(row, 'REPL_MODE')).toUpperCase()));
+      replicationSource = sourceConfigured ? 'Yes' : 'No';
+      replicationTarget = targetConfigured ? 'Yes' : 'No';
+    } else if (replServerRows) {
+      replicationSource = (replServerRows || []).some(row => String(ctx.getField(row, 'TARGET_REPL_SERVER_NAME')).trim()) ? 'Yes' : 'Not available';
+    }
+  }
+
+  return {
+    sections: [
+      {
+        title: 'Server',
+        items: [
+          { key:'server_name', label:'Server name', value:String(ctx.getField(statusRow, 'SERVER_NAME') || meta.server || 'Not available').trim() || 'Not available', sources:['doc_01_status.csv'] },
+          { key:'server_level', label:'SP software level', value:[ctx.getField(statusRow, 'VERSION'), ctx.getField(statusRow, 'RELEASE'), ctx.getField(statusRow, 'LEVEL'), ctx.getField(statusRow, 'SUBLEVEL')].some(Boolean) ? `Version ${ctx.getField(statusRow, 'VERSION') || '?'} Release ${ctx.getField(statusRow, 'RELEASE') || '?'} Level ${ctx.getField(statusRow, 'LEVEL') || '?'} Sublevel ${ctx.getField(statusRow, 'SUBLEVEL') || '?'}` : 'Not available', sources:['doc_01_status.csv'] },
+          { key:'server_address', label:'Server DNS / IP', value:(() => {
+            const primary = String(ctx.getField(statusRow, 'SERVER_HLA')).trim();
+            const secondary = String(ctx.getField(statusRow, 'SERVER_LLA')).trim();
+            if (primary && secondary && !/^\d+$/.test(secondary) && primary.toUpperCase() !== secondary.toUpperCase()) return `${primary}, ${secondary}`;
+            return primary || 'Not available';
+          })(), sources:['doc_01_status.csv'] }
+        ]
+      },
+      {
+        title: 'Database & Logs',
+        items: [
+          { key:'database_size', label:'Database size', value:dbCapacityMiB != null ? formatMiBAsGiB(dbCapacityMiB) : formatGiB(ctx.getField(dbRow, 'TOTAL_GB')), sources:['doc_03_dbspace.csv', 'doc_02_db.csv'] },
+          { key:'database_paths', label:'Database filenames / paths', value:dbspaceRows ? (dbPathValues.length ? dbPathValues.join(', ') : 'Not available') : 'Not available', sources:['doc_03_dbspace.csv'] },
+          { key:'active_log_size', label:'Active log size', value:formatGiB(ctx.getField(logRow, 'TOTAL_SPACE_GB')), sources:['doc_04_log.csv'] },
+          { key:'active_log_path', label:'Active log path / directory', value:String(ctx.getField(logRow, 'ACTIVE_LOG_DIR')).trim() || 'Not available', sources:['doc_04_log.csv'] },
+          { key:'archive_log_size', label:'Archive log size', value:(() => {
+            const gbValue = ctx.getField(logRow, 'ARCHIVE_LOG_SIZE_GB', 'ARCHIVE_SPACE_GB', 'ARCHIVE_TOTAL_SPACE_GB');
+            if (String(gbValue || '').trim()) return formatGiB(gbValue);
+            const mbValue = ctx.getField(logRow, 'ARCHIVE_LOG_SIZE_MB', 'ARCHIVE_SPACE_MB', 'ARCHIVE_TOTAL_SPACE_MB');
+            if (String(mbValue || '').trim()) return formatMiBAsGiB(mbValue);
+            return 'Not available';
+          })(), sources:['doc_04_log.csv'] },
+          { key:'archive_log_path', label:'Archive log path / directory', value:String(ctx.getField(logRow, 'ARCH_LOG_DIR')).trim() || 'Not available', sources:['doc_04_log.csv'] },
+          { key:'db_backups_24h', label:'Successful database backups (24h)', value:(() => {
+            const count = countDistinctRecentDbBackupEvents(ctx);
+            return count == null ? 'Not available' : String(count);
+          })(), sources:['hc_02_db_backups.csv'] }
+        ]
+      },
+      {
+        title: 'Library',
+        items: [
+          { key:'library_private', label:'Library volumes (Private)', value:libraryPrivateCount == null ? 'Not available' : libraryPrivateCount, sources:['doc_22_libraries.csv', 'doc_27_libvols_summary.csv'] },
+          { key:'library_scratch', label:'Library volumes (Scratch)', value:libraryScratchCount == null ? 'Not available' : libraryScratchCount, sources:['doc_22_libraries.csv', 'doc_27_libvols_summary.csv'] },
+          { key:'library_names', label:'Library names', value:libraryData ? (libraryRows && libraryRows.length ? libraryNames.join(', ') : 'N/A') : 'Not available', sources:['doc_22_libraries.csv'] },
+          { key:'library_drives', label:'Total drives', value:totalDrives == null ? 'Not available' : totalDrives, sources:['doc_22_libraries.csv', 'doc_23_drives.csv'] }
+        ]
+      },
+      {
+        title: 'Occupancy & Nodes',
+        items: [
+          { key:'primary_physical', label:'Physical primary occupancy', value:primaryPhysical, sources:['doc_30_occ_by_pool.csv'] },
+          { key:'primary_logical', label:'Logical primary occupancy', value:primaryLogical, sources:['doc_30_occ_by_pool.csv'] },
+          { key:'copy_physical', label:'Physical copy occupancy', value:copyPhysical, sources:['doc_30_occ_by_pool.csv'] },
+          { key:'copy_logical', label:'Logical copy occupancy', value:copyLogical, sources:['doc_30_occ_by_pool.csv'] },
+          { key:'registered_nodes', label:'Registered nodes', value:nodeRows ? String(nodeRows.length) : 'Not available', sources:['doc_07_nodes.csv'] },
+          { key:'unique_nodes', label:'Unique node addresses (non-blank TCP_ADDRESS)', value:nodeAddressValue, sources:['doc_07_nodes.csv'] }
+        ]
+      },
+      {
+        title: 'Replication',
+        items: [
+          { key:'replication_configured', label:'Replication configured', value:replicationConfigured, sources:['doc_33_repl_servers.csv', 'doc_43_node_repl_status.csv', 'hc_37_node_repl_24h.csv'] },
+          { key:'replication_success_24h', label:'Successful node replications (24h)', value:replicationSuccess24h, sources:['hc_37_node_repl_24h.csv'] },
+          { key:'replication_failed_24h', label:'Failed node replications (24h)', value:replicationFailed24h, sources:['hc_37_node_repl_24h.csv'] },
+          { key:'replication_target', label:'Replication target role', value:replicationTarget, sources:['doc_43_node_repl_status.csv'] },
+          { key:'replication_source', label:'Replication source role', value:replicationSource, sources:['doc_43_node_repl_status.csv', 'doc_33_repl_servers.csv'] },
+          { key:'replication_partners', label:'Replication partner names', value:replicationPartners, sources:['doc_33_repl_servers.csv', 'hc_37_node_repl_24h.csv'] }
+        ]
+      }
+    ]
+  };
+}
+
 function buildCoverSheet(wb, meta) {
   const ws = {};
   ws['!widthTracker'] = createWidthTracker(12, 44);
@@ -3077,8 +3375,33 @@ function buildCoverSheet(wb, meta) {
     ws_updateRef(ws, row, 5);
   });
 
+  const statsModel = deriveEnvironmentStatisticsModel({ imported: STATE.imported || {}, archive: STATE.archive || null }, meta);
+  let row = 10;
+  ws['!merges'].push({ s:{ r: row, c: 0 }, e:{ r: row, c: 5 } });
+  ws['!rows'][row] = { hpt: 22 };
+  ws_set(ws, row++, 0, 'Environment at a glance', STYLES.idxSection);
+  statsModel.sections.forEach(section => {
+    ws['!merges'].push({ s:{ r: row, c: 0 }, e:{ r: row, c: 5 } });
+    ws['!rows'][row] = { hpt: 18 };
+    ws_set(ws, row++, 0, section.title, STYLES.coverSubTitle);
+    for (let i = 0; i < section.items.length; i += 2) {
+      const left = section.items[i];
+      const right = section.items[i + 1] || null;
+      ws_set(ws, row, 0, left.label, STYLES.coverLabel);
+      ws_set(ws, row, 1, left.value, left.value === 'Not available' || left.value === 'Not specified' ? STYLES.coverMissing : STYLES.coverValue);
+      ws['!merges'].push({ s:{ r: row, c: 1 }, e:{ r: row, c: 2 } });
+      if (right) {
+        ws_set(ws, row, 3, right.label, STYLES.coverLabel);
+        ws_set(ws, row, 4, right.value, right.value === 'Not available' || right.value === 'Not specified' ? STYLES.coverMissing : STYLES.coverValue);
+        ws['!merges'].push({ s:{ r: row, c: 4 }, e:{ r: row, c: 5 } });
+      }
+      ws_updateRef(ws, row, 5);
+      row++;
+    }
+  });
+
   ws_updateRef(ws, 0, 5);
-  ws_updateRef(ws, 8, 5);
+  ws_updateRef(ws, row, 5);
   applyTrackedColumnWidths(ws);
   XLSX.utils.book_append_sheet(wb, ws, 'Cover');
 }
@@ -4619,6 +4942,7 @@ function evaluateHealthcheckReport(stateLike) {
     generatedAt: new Date().toISOString(),
     referenceTimestamp: ctx.referenceDate.toISOString(),
     metadata: reportMeta,
+    importedSnapshot: cloneImportedSnapshot((stateLike && stateLike.imported) || STATE.imported || {}),
     archive: STATE.archive ? JSON.parse(JSON.stringify(STATE.archive)) : null,
     overall: computeHealthcheckOverall(results),
     counts,
@@ -5420,6 +5744,21 @@ function docxTable(rows) {
   return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="B7C3D0"/><w:left w:val="single" w:sz="4" w:space="0" w:color="B7C3D0"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="B7C3D0"/><w:right w:val="single" w:sz="4" w:space="0" w:color="B7C3D0"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="D1D5DB"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="D1D5DB"/></w:tblBorders></w:tblPr>${body}</w:tbl>`;
 }
 
+function docxPageBreak() {
+  return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+}
+
+function buildEnvironmentAtGlanceDocx(body, statsModel) {
+  body.push(docxParagraph('Environment at a glance', 'Heading1'));
+  statsModel.sections.forEach(section => {
+    body.push(docxParagraph(section.title, 'Heading2'));
+    body.push(docxTable(section.items.map(item => [
+      docxCell(item.label, 2800, 'F8FAFC'),
+      docxCell(item.value, 5000)
+    ])));
+  });
+}
+
 function healthStatusColorHex(status) {
   if (status === 'RED') return 'C00000';
   if (status === 'AMBER') return 'C27C0E';
@@ -5433,6 +5772,7 @@ function buildHealthcheckDocxBytes(report) {
   const archive = report.archive || {};
   const manifest = archive.manifest || {};
   const ai = getHealthcheckAiDisplayInfo(report || {});
+  const statsModel = deriveEnvironmentStatisticsModel({ imported: report.importedSnapshot || {}, archive: report.archive || null }, meta);
   const body = [];
   body.push(docxParagraph('StorageTools — HELIX Healthcheck Analysis', 'Title'));
   body.push(docxParagraph(`Customer: ${valueOrDash(meta.customer)}`, null));
@@ -5440,6 +5780,8 @@ function buildHealthcheckDocxBytes(report) {
   body.push(docxParagraph(`Report date: ${valueOrDash(meta.reportDate)}`, null));
   body.push(docxParagraph(`Server: ${valueOrDash(meta.server)}`, null));
   body.push(docxParagraph(`Overall traffic light: ${report.overall}`, 'Heading1', healthStatusColorHex(report.overall === 'ORANGE' ? 'AMBER' : report.overall)));
+  buildEnvironmentAtGlanceDocx(body, statsModel);
+  body.push(docxPageBreak());
   body.push(docxParagraph('AI-assisted healthcheck evaluation', 'Heading1'));
   body.push(docxParagraph(`AI-assisted evaluation: ${ai.label}`, null));
   if (ai.model) body.push(docxParagraph(`Model: ${ai.model}`, null));

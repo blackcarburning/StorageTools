@@ -49,6 +49,7 @@ let ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatS
     parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue,
     deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES,
     HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes,
+    deriveEnvironmentStatisticsModel,
     filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload,
     requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename,
     refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml,
@@ -129,7 +130,7 @@ try {
   };
   const sandbox = new Function( // eslint-disable-line no-new-func
     'document', 'localStorage', 'alert', 'prompt', 'URL', 'Blob', 'TextEncoder', 'TextDecoder', 'clearTimeout', 'setTimeout',
-    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES, HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes, filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload, requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename, refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml, renderMarkdownToHtml, __elements: document.__elements };`
+    `${js}; return { ALL_QUERIES, WORKBOOK_SHEETS, generateCmdContent, generateShContent, formatSectionName, parseTarArchive, parseManifest, STATE, buildCollectionLogSheet, buildCollectionErrorsSheet, XLSX, buildCoverSheet, buildIndexSheet, buildSheet, readReportMetadata, defaultReportFilename, sanitizeXlsxFilename, syncReportMetadataFromConfig, isoLocalDate, generateReport, parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue, deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES, HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes, deriveEnvironmentStatisticsModel, filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload, requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename, refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml, renderMarkdownToHtml, __elements: document.__elements };`
   );
   const result = sandbox(
     mockDoc,
@@ -150,6 +151,7 @@ try {
      parseDsmOutput, sanitizeXmlChars, addQueryBlock, ws_set, cmdSafeTitle, cmdSafeSetValue,
      deriveExpectedColumnsFromSql, buildImportedState, headerLineWidth, STYLES,
      HEALTHCHECK_RULES, evaluateHealthcheckReport, buildHealthcheckReportHtml, buildHealthcheckDocxBytes,
+     deriveEnvironmentStatisticsModel,
      filterCompatibleOpenAiModels, parseOpenAiResponseText, buildHealthcheckAiPayload,
      requestOpenAiHealthcheckAnalysis, createArchiveToken, defaultHealthcheckDocxFilename,
      refreshOpenAiModels, runHealthcheckAnalysis, renderHealthcheckSummary, buildHealthcheckReportShellHtml,
@@ -211,6 +213,8 @@ assertContains('doc_42_retrules', ['FROM RETRULES', 'NAME', 'RETDAYS', 'RETDEST'
 assertContains('hc_32_retsets_health', ['FROM RETSETS', 'STATSCOMPLETE', 'STATE']);
 assertContains('hc_33_retsets_expiring', ['FROM RETSETS', 'EXPDATE', 'RETPOOL']);
 assertContains('doc_33_repl_servers', ['FROM REPLSERVERS']);
+assertContains('doc_43_node_repl_status', ['REPL_MODE', 'REPL_STATE', 'REPL_BKRULE', 'REPL_ARRULE', 'REPL_SPRULE']);
+assertContains('hc_37_node_repl_24h', ['FROM REPLICATIONVIEW', 'COMP_STATE', 'COMP_REASON', 'BKSERVER', 'ARSERVER', 'SMSERVER']);
 assertContains('hc_18_actlog_errors', ['NODENAME', 'SERVERNAME', 'SCHEDNAME', 'DOMAINNAME']);
 assertNotContains('hc_18_actlog_errors', ['NODE_NAME', 'SERVER_NAME', 'SCHED_NAME', 'DOMAIN_NAME']);
 assertContains('hc_17_no_repl_start', ['LAST_REPL_START_1', 'LAST_REPL_START_2']);
@@ -1871,14 +1875,24 @@ function parseStoredZipEntries(bytes) {
 
 const HEALTH_FIXTURE_GOOD = importedFromObjects({
   'doc_01_status.csv': [{
+    SERVER_NAME: 'SRV1', SERVER_HLA: 'srv1.example.com', SERVER_LLA: '1500',
     VERSION: '8', RELEASE: '1', LEVEL: '27', SUBLEVEL: '0',
     ACTLOGRETENTION: '30', LICENSECOMPLIANCE: 'Valid',
     MAXSESSIONS: '300', MAXSCHEDSESSIONS: '240',
     ACCOUNTING: 'ON', QUERYSCHEDPERIOD: '1',
     SCHEDMODE: 'POLLING', SUMMARYRETENTION: '30', EVENTRETENTION: '30',
   }],
-  'doc_02_db.csv': [{ DATABASE_NAME: 'TSMDB1', FULL_DEV_CLASS: 'LTO' }],
-  'doc_04_log.csv': [{ PCT_USED: '25', MIRROR_LOG_DIR: '/mirror/log', AFAILOVER_LOG_DIR: '/fail/log' }],
+  'doc_02_db.csv': [{ DATABASE_NAME: 'TSMDB1', FULL_DEV_CLASS: 'LTO', TOTAL_GB: '16.00' }],
+  'doc_03_dbspace.csv': [
+    { VOLUME_NAME: 'DBV001', FILE_SYSTEM: '/tsm/db01', CAPACITY_MB: '8192' },
+    { VOLUME_NAME: 'DBV002', FILE_SYSTEM: '/tsm/db02', CAPACITY_MB: '4096' },
+    { VOLUME_NAME: 'DBV002', FILE_SYSTEM: '/tsm/db02', CAPACITY_MB: '4096' },
+  ],
+  'doc_04_log.csv': [{
+    TOTAL_SPACE_GB: '8.00', PCT_USED: '25',
+    ACTIVE_LOG_DIR: '/tsm/actlog', ARCH_LOG_DIR: '/tsm/archlog',
+    MIRROR_LOG_DIR: '/mirror/log', AFAILOVER_LOG_DIR: '/fail/log'
+  }],
   'doc_05_options.csv': [
     { OPTION_NAME: 'movebatchsize', OPTION_VALUE: '1000' },
     { OPTION_NAME: 'movesizethresh', OPTION_VALUE: '32768' },
@@ -1904,13 +1918,33 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
   'doc_22_libraries.csv': [{ LIBRARY_NAME: 'LIB1', LIBRARY_TYPE: 'SCSI' }],
   'doc_23_drives.csv': [{ LIBRARY_NAME: 'LIB1', DRIVE_NAME: 'DRV1', ONLINE: 'YES' }],
   'doc_24_paths.csv': [{ SOURCE_NAME: 'SRV1', ONLINE: 'YES' }],
+  'doc_27_libvols_summary.csv': [
+    { LIBRARY_NAME: 'LIB1', STATUS: 'PRIVATE', VOL_COUNT: '12' },
+    { LIBRARY_NAME: 'LIB1', STATUS: 'SCRATCH', VOL_COUNT: '4' }
+  ],
+  'doc_30_occ_by_pool.csv': [
+    { STGPOOL_NAME: 'DISKPOOL1', POOLTYPE: 'PRIMARY', LOGICAL_GB: '10.50', PHYSICAL_GB: '8.25' },
+    { STGPOOL_NAME: 'COPYPOOL1', POOLTYPE: 'COPY', LOGICAL_GB: '3.50', PHYSICAL_GB: '2.25' }
+  ],
+  'doc_33_repl_servers.csv': [
+    { SERVER_NAME: 'SRV1', TARGET_REPL_SERVER_NAME: 'TARGET1', REPL_STATE: 'ENABLED', LAST_SEND_STATUS: 'SUCCESS' }
+  ],
+  'doc_43_node_repl_status.csv': [
+    { NODE_NAME: 'NODE1', REPL_MODE: 'SYNCSEND', REPL_STATE: 'ENABLED', REPL_BKRULE: 'BK_RULE', REPL_ARRULE: '', REPL_SPRULE: '' },
+    { NODE_NAME: 'NODE2', REPL_MODE: 'SYNCRECEIVE', REPL_STATE: 'ENABLED', REPL_BKRULE: '', REPL_ARRULE: '', REPL_SPRULE: '' }
+  ],
   'doc_26_disk_volumes.csv': [{ VOLUME_NAME: 'VOL1', STATUS: 'ONLINE' }],
   'doc_34_drm_status.csv': [{ DBBEXPIREDAYS: '3', CHECKLABEL: 'No', FILEPROCESS: 'No' }],
   'hc_01_db_space.csv': [{ DB_PCT_USED: '70' }],
   'hc_02_db_backups.csv': [
-    { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-15T06:00:00Z' },
+    { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-15T06:00:00Z', BACKUP_SERIES: '100' },
+    { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-15T06:00:00Z', BACKUP_SERIES: '100' },
     { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-14T06:00:00Z' },
     { TYPE: 'BACKUPFULL', DATE_TIME: '2026-07-13T06:00:00Z' },
+  ],
+  'hc_37_node_repl_24h.csv': [
+    { NODE_NAME: 'NODE1', START_TIME: '2026-07-15T03:00:00Z', END_TIME: '2026-07-15T03:30:00Z', COMP_STATE: 'COMPLETE', COMP_REASON: '', BKSERVER: 'TARGET1', ARSERVER: '', SMSERVER: '' },
+    { NODE_NAME: 'NODE2', START_TIME: '2026-07-15T04:00:00Z', END_TIME: '2026-07-15T04:30:00Z', COMP_STATE: 'FAILED', COMP_REASON: 'TARGET ERROR', BKSERVER: 'TARGET1', ARSERVER: '', SMSERVER: '' }
   ],
   'hc_25_container_state.csv': [{ STGPOOL_NAME: 'DIRPOOL1', STATE: 'AVAILABLE', CONTAINER_COUNT: '10' }],
   'hc_35_scratch_warnings.csv': [],
@@ -3129,6 +3163,86 @@ section('58. Markdown rendering in the AI narrative HTML and DOCX report');
   // DOCX should use Heading2 for AI narrative headings
   if (docxXml.includes('Heading2')) ok('DOCX report: AI narrative headings use Heading2 style');
   else fail('DOCX report: AI narrative headings missing Heading2 style');
+}
+
+section('59. Environment-at-a-glance statistics model and cover exports');
+{
+  if (typeof deriveEnvironmentStatisticsModel !== 'function') {
+    fail('deriveEnvironmentStatisticsModel not exported');
+  } else {
+    const baseState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    const stats = deriveEnvironmentStatisticsModel(baseState, { customer:'ACME', preparedBy:'Analyst', reportDate:'2026-07-15', server:'SRV1' });
+    const items = new Map(stats.sections.flatMap(section => section.items.map(item => [item.key, item])));
+    const stat = key => items.get(key) ? items.get(key).value : undefined;
+
+    if (stat('server_name') === 'SRV1') ok('Environment stats: server name derived from STATUS');
+    else fail(`Environment stats: unexpected server name ${JSON.stringify(stat('server_name'))}`);
+    if (stat('server_level') === 'Version 8 Release 1 Level 27 Sublevel 0') ok('Environment stats: software level formatted clearly');
+    else fail(`Environment stats: unexpected server level ${JSON.stringify(stat('server_level'))}`);
+    if (stat('server_address') === 'srv1.example.com') ok('Environment stats: server DNS/IP prefers HLA address and excludes numeric LLA port');
+    else fail(`Environment stats: unexpected server address ${JSON.stringify(stat('server_address'))}`);
+    if (stat('database_size') === '12.00 GiB') ok('Environment stats: database size totals DBSPACE capacity without double-counting duplicate rows');
+    else fail(`Environment stats: unexpected database size ${JSON.stringify(stat('database_size'))}`);
+    if (stat('database_paths') === '/tsm/db01, /tsm/db02') ok('Environment stats: database paths are deduplicated and sorted');
+    else fail(`Environment stats: unexpected database paths ${JSON.stringify(stat('database_paths'))}`);
+    if (stat('active_log_size') === '8.00 GiB' && stat('active_log_path') === '/tsm/actlog') ok('Environment stats: active log size/path derived from LOG');
+    else fail(`Environment stats: unexpected active log values ${JSON.stringify([stat('active_log_size'), stat('active_log_path')])}`);
+    if (stat('archive_log_size') === 'Not available' && stat('archive_log_path') === '/tsm/archlog') ok('Environment stats: archive log size/path distinguish unavailable size from available path');
+    else fail(`Environment stats: unexpected archive log values ${JSON.stringify([stat('archive_log_size'), stat('archive_log_path')])}`);
+    if (stat('db_backups_24h') === '1') ok('Environment stats: database backups in 24h deduplicate duplicate BACKUP_SERIES rows');
+    else fail(`Environment stats: unexpected db backup 24h count ${JSON.stringify(stat('db_backups_24h'))}`);
+    if (stat('library_private') === '12' && stat('library_scratch') === '4' && stat('library_names') === 'LIB1' && stat('library_drives') === '1') ok('Environment stats: library values derived from libraries, libvolumes, and drives');
+    else fail(`Environment stats: unexpected library values ${JSON.stringify([stat('library_private'), stat('library_scratch'), stat('library_names'), stat('library_drives')])}`);
+    if (stat('primary_physical') === '8.25 GiB' && stat('primary_logical') === '10.50 GiB' && stat('copy_physical') === '2.25 GiB' && stat('copy_logical') === '3.50 GiB') ok('Environment stats: primary/copy occupancy uses pooltype semantics with separate physical and logical totals');
+    else fail(`Environment stats: unexpected occupancy values ${JSON.stringify([stat('primary_physical'), stat('primary_logical'), stat('copy_physical'), stat('copy_logical')])}`);
+    if (stat('registered_nodes') === '2' && stat('unique_nodes') === '2') ok('Environment stats: registered nodes and unique TCP-address count derived correctly');
+    else fail(`Environment stats: unexpected node counts ${JSON.stringify([stat('registered_nodes'), stat('unique_nodes')])}`);
+    if (stat('replication_configured') === 'Yes' && stat('replication_success_24h') === '1' && stat('replication_failed_24h') === '1' && stat('replication_source') === 'Yes' && stat('replication_target') === 'Yes' && stat('replication_partners') === 'TARGET1') ok('Environment stats: replication configuration, roles, partners, and 24h counts derived correctly');
+    else fail(`Environment stats: unexpected replication values ${JSON.stringify([stat('replication_configured'), stat('replication_success_24h'), stat('replication_failed_24h'), stat('replication_source'), stat('replication_target'), stat('replication_partners')])}`);
+
+    const noLibraryState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    noLibraryState.imported['doc_22_libraries.csv'] = importedFromObjects({ 'doc_22_libraries.csv': [] })['doc_22_libraries.csv'];
+    noLibraryState.imported['doc_23_drives.csv'] = importedFromObjects({ 'doc_23_drives.csv': [] })['doc_23_drives.csv'];
+    noLibraryState.imported['doc_27_libvols_summary.csv'] = importedFromObjects({ 'doc_27_libvols_summary.csv': [] })['doc_27_libvols_summary.csv'];
+    const noLibraryStats = new Map(deriveEnvironmentStatisticsModel(noLibraryState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (noLibraryStats.get('library_private') === 'N/A' && noLibraryStats.get('library_scratch') === 'N/A' && noLibraryStats.get('library_names') === 'N/A' && noLibraryStats.get('library_drives') === 'N/A') ok('Environment stats: no-library case renders N/A rather than zero');
+    else fail(`Environment stats: no-library case incorrect ${JSON.stringify([noLibraryStats.get('library_private'), noLibraryStats.get('library_scratch'), noLibraryStats.get('library_names'), noLibraryStats.get('library_drives')])}`);
+
+    const zeroLibraryState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    zeroLibraryState.imported['doc_27_libvols_summary.csv'] = importedFromObjects({ 'doc_27_libvols_summary.csv': [] })['doc_27_libvols_summary.csv'];
+    zeroLibraryState.imported['doc_23_drives.csv'] = importedFromObjects({ 'doc_23_drives.csv': [] })['doc_23_drives.csv'];
+    const zeroLibraryStats = new Map(deriveEnvironmentStatisticsModel(zeroLibraryState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (zeroLibraryStats.get('library_private') === '0' && zeroLibraryStats.get('library_scratch') === '0' && zeroLibraryStats.get('library_drives') === '0') ok('Environment stats: existing library with zero volumes/drives renders 0');
+    else fail(`Environment stats: zero-library counts incorrect ${JSON.stringify([zeroLibraryStats.get('library_private'), zeroLibraryStats.get('library_scratch'), zeroLibraryStats.get('library_drives')])}`);
+
+    const noReplicationState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    noReplicationState.imported['doc_33_repl_servers.csv'] = importedFromObjects({ 'doc_33_repl_servers.csv': [] })['doc_33_repl_servers.csv'];
+    noReplicationState.imported['doc_43_node_repl_status.csv'] = importedFromObjects({ 'doc_43_node_repl_status.csv': [] })['doc_43_node_repl_status.csv'];
+    noReplicationState.imported['hc_37_node_repl_24h.csv'] = importedFromObjects({ 'hc_37_node_repl_24h.csv': [] })['hc_37_node_repl_24h.csv'];
+    const noReplicationStats = new Map(deriveEnvironmentStatisticsModel(noReplicationState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (noReplicationStats.get('replication_configured') === 'No' && noReplicationStats.get('replication_success_24h') === 'N/A' && noReplicationStats.get('replication_failed_24h') === 'N/A' && noReplicationStats.get('replication_target') === 'N/A' && noReplicationStats.get('replication_source') === 'N/A' && noReplicationStats.get('replication_partners') === 'N/A') ok('Environment stats: no-replication case renders No plus N/A details');
+    else fail(`Environment stats: no-replication case incorrect ${JSON.stringify([noReplicationStats.get('replication_configured'), noReplicationStats.get('replication_success_24h'), noReplicationStats.get('replication_failed_24h'), noReplicationStats.get('replication_target'), noReplicationStats.get('replication_source'), noReplicationStats.get('replication_partners')])}`);
+
+    const unavailableReplState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    delete unavailableReplState.imported['hc_37_node_repl_24h.csv'];
+    const unavailableReplStats = new Map(deriveEnvironmentStatisticsModel(unavailableReplState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (unavailableReplStats.get('replication_configured') === 'Yes' && unavailableReplStats.get('replication_success_24h') === 'Not available' && unavailableReplStats.get('replication_failed_24h') === 'Not available') ok('Environment stats: configured replication with missing 24h dataset renders Not available counts');
+    else fail(`Environment stats: missing-replication-data case incorrect ${JSON.stringify([unavailableReplStats.get('replication_configured'), unavailableReplStats.get('replication_success_24h'), unavailableReplStats.get('replication_failed_24h')])}`);
+
+    const wbEnv = { SheetNames: [], Sheets: {} };
+    const addEnvSheet = (ws, name) => { wbEnv.SheetNames.push(name); wbEnv.Sheets[name] = ws; };
+    STATE.imported = clone(HEALTH_FIXTURE_GOOD);
+    STATE.archive = baseState.archive;
+    buildCoverSheet({ SheetNames: wbEnv.SheetNames, Sheets: wbEnv.Sheets, utils: { book_append_sheet: addEnvSheet } }, { customer:'ACME', preparedBy:'Analyst', reportDate:'2026-07-15', server:'SRV1' });
+    const coverXmlCells = Object.values(wbEnv.Sheets.Cover || {}).filter(cell => cell && typeof cell === 'object' && Object.prototype.hasOwnProperty.call(cell, 'v')).map(cell => String(cell.v));
+    if (coverXmlCells.includes('Environment at a glance') && coverXmlCells.includes('Logical copy occupancy') && coverXmlCells.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverXmlCells.includes('TARGET1')) ok('Cover sheet: shared environment statistics appear with requested grouping labels');
+    else fail('Cover sheet: environment statistics missing expected labels or values');
+
+    const coverReport = evaluateHealthcheckReport(baseState);
+    const coverDocXml = parseStoredZipEntries(buildHealthcheckDocxBytes(coverReport)).get('word/document.xml') || '';
+    if (coverDocXml.includes('Environment at a glance') && coverDocXml.includes('Logical copy occupancy') && coverDocXml.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverDocXml.includes('TARGET1') && coverDocXml.includes('N/A') && coverDocXml.includes('Not available')) ok('Healthcheck DOCX: environment section uses shared model and preserves N/A vs Not available distinctions');
+    else fail('Healthcheck DOCX: environment section missing shared-model labels/values');
+  }
 }
 if (FAIL > 0) {
   console.error('VALIDATION FAILED');
