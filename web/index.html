@@ -3086,7 +3086,7 @@ function classifyReplicationCompletionState(state, reason) {
   const normalizedState = String(state == null ? '' : state).trim().toUpperCase();
   const normalizedReason = String(reason == null ? '' : reason).trim().toUpperCase();
   if (/(FAIL|ERROR|INCOMPLETE|PARTIAL|CANCEL|ABORT|STOP)/.test(normalizedState)) return 'FAILURE';
-  if (normalizedReason && !/^(NONE|SUCCESS|COMPLETED?)$/.test(normalizedReason)) return 'FAILURE';
+  if (normalizedReason && !/^(NONE|SUCCESS|COMPLETED)$/.test(normalizedReason)) return 'FAILURE';
   if (/(COMPLETE|SUCCESS)/.test(normalizedState) && !/(INCOMPLETE|UNSUCCESS|FAIL)/.test(normalizedState)) return 'SUCCESS';
   return '';
 }
@@ -3240,7 +3240,10 @@ function deriveEnvironmentStatisticsModel(stateLike, reportMeta) {
     replicationFailed24h = 'N/A';
     replicationPartners = 'N/A';
   } else if (replicationConfiguredState === 'yes') {
-    replicationPartners = replPartnerNames.length ? replPartnerNames.join(', ') : (replServerData || repl24hData ? 'Not available' : 'N/A');
+    const hasReplicationPartnerSource = Boolean(replServerData || repl24hData);
+    replicationPartners = replPartnerNames.length
+      ? replPartnerNames.join(', ')
+      : (hasReplicationPartnerSource ? 'Not available' : 'N/A');
     if (repl24hRows) {
       const successNodes = new Set();
       const failedNodes = new Set();
@@ -3275,7 +3278,9 @@ function deriveEnvironmentStatisticsModel(stateLike, reportMeta) {
           { key:'server_address', label:'Server DNS / IP', value:(() => {
             const primary = String(ctx.getField(statusRow, 'SERVER_HLA')).trim();
             const secondary = String(ctx.getField(statusRow, 'SERVER_LLA')).trim();
-            if (primary && secondary && !/^\d+$/.test(secondary) && primary.toUpperCase() !== secondary.toUpperCase()) return `${primary}, ${secondary}`;
+            const secondaryLooksLikePort = /^\d+$/.test(secondary);
+            const isDistinctSecondaryAddress = primary.toUpperCase() !== secondary.toUpperCase();
+            if (primary && secondary && !secondaryLooksLikePort && isDistinctSecondaryAddress) return `${primary}, ${secondary}`;
             return primary || 'Not available';
           })(), sources:['doc_01_status.csv'] }
         ]
