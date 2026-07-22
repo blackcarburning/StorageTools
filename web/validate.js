@@ -3180,6 +3180,27 @@ section('59. Environment-at-a-glance statistics model and cover exports');
     else fail(`Environment stats: unexpected server level ${JSON.stringify(stat('server_level'))}`);
     if (stat('server_address') === 'srv1.example.com') ok('Environment stats: server DNS/IP prefers HLA address and excludes numeric LLA port');
     else fail(`Environment stats: unexpected server address ${JSON.stringify(stat('server_address'))}`);
+
+    const secondaryAddressState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    secondaryAddressState.imported['doc_01_status.csv'] = importedFromObjects({
+      'doc_01_status.csv': [{ ...HEALTH_FIXTURE_GOOD['doc_01_status.csv'].rows[0].reduce((obj, value, index) => { obj[HEALTH_FIXTURE_GOOD['doc_01_status.csv'].headers[index]] = value; return obj; }, {}), SERVER_LLA: 'backup.example.com' }]
+    })['doc_01_status.csv'];
+    const zeroPortState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    zeroPortState.imported['doc_01_status.csv'] = importedFromObjects({
+      'doc_01_status.csv': [{ ...HEALTH_FIXTURE_GOOD['doc_01_status.csv'].rows[0].reduce((obj, value, index) => { obj[HEALTH_FIXTURE_GOOD['doc_01_status.csv'].headers[index]] = value; return obj; }, {}), SERVER_LLA: '0' }]
+    })['doc_01_status.csv'];
+    const highPortState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    highPortState.imported['doc_01_status.csv'] = importedFromObjects({
+      'doc_01_status.csv': [{ ...HEALTH_FIXTURE_GOOD['doc_01_status.csv'].rows[0].reduce((obj, value, index) => { obj[HEALTH_FIXTURE_GOOD['doc_01_status.csv'].headers[index]] = value; return obj; }, {}), SERVER_LLA: '65536' }]
+    })['doc_01_status.csv'];
+    const alphaPortState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    alphaPortState.imported['doc_01_status.csv'] = importedFromObjects({
+      'doc_01_status.csv': [{ ...HEALTH_FIXTURE_GOOD['doc_01_status.csv'].rows[0].reduce((obj, value, index) => { obj[HEALTH_FIXTURE_GOOD['doc_01_status.csv'].headers[index]] = value; return obj; }, {}), SERVER_LLA: 'abc' }]
+    })['doc_01_status.csv'];
+    const addressFromState = state => new Map(deriveEnvironmentStatisticsModel(state, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value]))).get('server_address');
+    if (addressFromState(secondaryAddressState) === 'srv1.example.com, backup.example.com' && addressFromState(zeroPortState) === 'srv1.example.com, 0' && addressFromState(highPortState) === 'srv1.example.com, 65536' && addressFromState(alphaPortState) === 'srv1.example.com, abc') ok('Environment stats: server address logic only suppresses valid 1-65535 numeric ports');
+    else fail(`Environment stats: server address port detection incorrect ${JSON.stringify([addressFromState(secondaryAddressState), addressFromState(zeroPortState), addressFromState(highPortState), addressFromState(alphaPortState)])}`);
+
     if (stat('database_size') === '12.00 GiB') ok('Environment stats: database size totals DBSPACE capacity from imported DBSPACE rows');
     else fail(`Environment stats: unexpected database size ${JSON.stringify(stat('database_size'))}`);
     if (stat('database_paths') === '/tsm/db01, /tsm/db02') ok('Environment stats: database paths are deduplicated and sorted');

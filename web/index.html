@@ -3073,7 +3073,7 @@ function formatMiBAsGiB(value) {
 // accepted success/failure patterns explicit and reusable here.
 const REPLICATION_FAILURE_PATTERN = /(FAIL|ERROR|INCOMPLETE|PARTIAL|CANCEL|ABORT|STOP)/;
 const REPLICATION_SUCCESS_PATTERN = /(COMPLETE|SUCCESS)/;
-const REPLICATION_NEGATED_SUCCESS_PATTERN = /(INCOMPLETE|UNSUCCESS|FAIL)/;
+const REPLICATION_UNSUCCESSFUL_PATTERN = /(INCOMPLETE|UNSUCCESS|FAIL)/;
 
 function sumFieldNumbers(rows, getter) {
   let total = 0;
@@ -3100,7 +3100,7 @@ function classifyReplicationCompletionState(state, reason) {
   const normalizedReason = String(reason == null ? '' : reason).trim().toUpperCase();
   if (REPLICATION_FAILURE_PATTERN.test(normalizedState)) return 'FAILURE';
   if (normalizedReason && !/^(NONE|SUCCESS|COMPLETE)$/.test(normalizedReason)) return 'FAILURE';
-  if (REPLICATION_SUCCESS_PATTERN.test(normalizedState) && !REPLICATION_NEGATED_SUCCESS_PATTERN.test(normalizedState)) return 'SUCCESS';
+  if (REPLICATION_SUCCESS_PATTERN.test(normalizedState) && !REPLICATION_UNSUCCESSFUL_PATTERN.test(normalizedState)) return 'SUCCESS';
   return '';
 }
 
