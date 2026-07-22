@@ -1892,7 +1892,9 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
   'doc_04_log.csv': [{
     TOTAL_SPACE_GB: '8.00', PCT_USED: '25',
     ACTIVE_LOG_DIR: '/tsm/actlog', ARCH_LOG_DIR: '/tsm/archlog',
-    MIRROR_LOG_DIR: '/mirror/log', AFAILOVER_LOG_DIR: '/fail/log'
+    MIRROR_LOG_DIR: '/mirror/log', AFAILOVER_LOG_DIR: '/fail/log',
+    ACTIVELOG_TOL_FS_MB: '10176.00', ACTIVELOG_USED_FS_MB: '9831.47', ACTIVELOG_FREE_FS_MB: '344.53',
+    ARCHLOG_TOL_FS_MB: '20416.00', ARCHLOG_USED_FS_MB: '573.40', ARCHLOG_FREE_FS_MB: '19842.60'
   }],
   'doc_05_options.csv': [
     { OPTION_NAME: 'movebatchsize', OPTION_VALUE: '1000' },
@@ -3036,7 +3038,23 @@ section('55. IBM SP SQL regression — hc_13 and hc_17 use compatible direct-joi
   else fail('SH hc_17_no_repl_start: missing compatible direct-join SQL');
 }
 
-section('56. ACTLOG no-match filtering');
+section('55a. CMD and SH collector SQL includes archive-log and active-log filesystem fields');
+{
+  const cmd = generateCmdContent();
+  const sh  = generateShContent();
+  // Both collectors must include ARCHLOG_TOL_FS_MB in doc_04_log query
+  if (cmd.includes('ARCHLOG_TOL_FS_MB') && cmd.includes('ARCHLOG_USED_FS_MB') && cmd.includes('ARCHLOG_FREE_FS_MB')) ok('CMD doc_04_log SQL includes ARCHLOG_TOL/USED/FREE_FS_MB');
+  else fail('CMD doc_04_log SQL missing ARCHLOG_TOL/USED/FREE_FS_MB');
+  if (sh.includes('ARCHLOG_TOL_FS_MB') && sh.includes('ARCHLOG_USED_FS_MB') && sh.includes('ARCHLOG_FREE_FS_MB')) ok('SH doc_04_log SQL includes ARCHLOG_TOL/USED/FREE_FS_MB');
+  else fail('SH doc_04_log SQL missing ARCHLOG_TOL/USED/FREE_FS_MB');
+  // Both collectors must include ACTIVELOG_TOL_FS_MB in doc_04_log query
+  if (cmd.includes('ACTIVELOG_TOL_FS_MB') && cmd.includes('ACTIVELOG_USED_FS_MB') && cmd.includes('ACTIVELOG_FREE_FS_MB')) ok('CMD doc_04_log SQL includes ACTIVELOG_TOL/USED/FREE_FS_MB');
+  else fail('CMD doc_04_log SQL missing ACTIVELOG_TOL/USED/FREE_FS_MB');
+  if (sh.includes('ACTIVELOG_TOL_FS_MB') && sh.includes('ACTIVELOG_USED_FS_MB') && sh.includes('ACTIVELOG_FREE_FS_MB')) ok('SH doc_04_log SQL includes ACTIVELOG_TOL/USED/FREE_FS_MB');
+  else fail('SH doc_04_log SQL missing ACTIVELOG_TOL/USED/FREE_FS_MB');
+}
+
+
 {
   const actlogQuery = { id: 'hc_18_actlog_errors', outputFile: 'hc_18_actlog_errors.csv', actlogSource: true };
 
@@ -3213,10 +3231,14 @@ section('59. Environment-at-a-glance statistics model and cover exports');
     else fail(`Environment stats: unexpected database size ${JSON.stringify(stat('database_size'))}`);
     if (stat('database_paths') === '/tsm/db01, /tsm/db02') ok('Environment stats: database paths are deduplicated and sorted');
     else fail(`Environment stats: unexpected database paths ${JSON.stringify(stat('database_paths'))}`);
-    if (stat('active_log_size') === '8.00 GiB' && stat('active_log_path') === '/tsm/actlog') ok('Environment stats: active log size/path derived from LOG');
+    if (stat('active_log_size') === '8.00 GiB' && stat('active_log_path') === '/tsm/actlog') ok('Environment stats: active transaction-log allocated size and path derived from LOG');
     else fail(`Environment stats: unexpected active log values ${JSON.stringify([stat('active_log_size'), stat('active_log_path')])}`);
-    if (stat('archive_log_size') === 'Not available' && stat('archive_log_path') === '/tsm/archlog') ok('Environment stats: archive log size/path distinguish unavailable size from available path');
+    if (stat('activelog_fs_total') === '9.94 GiB' && stat('activelog_fs_used') === '9.60 GiB' && stat('activelog_fs_free') === '0.34 GiB') ok('Environment stats: active-log filesystem capacity derived from ACTIVELOG_TOL/USED/FREE_FS_MB');
+    else fail(`Environment stats: unexpected active-log filesystem values ${JSON.stringify([stat('activelog_fs_total'), stat('activelog_fs_used'), stat('activelog_fs_free')])}`);
+    if (stat('archive_log_size') === '19.94 GiB' && stat('archive_log_path') === '/tsm/archlog') ok('Environment stats: archive-log filesystem capacity derived from ARCHLOG_TOL_FS_MB and path from ARCH_LOG_DIR');
     else fail(`Environment stats: unexpected archive log values ${JSON.stringify([stat('archive_log_size'), stat('archive_log_path')])}`);
+    if (stat('archive_log_used') === '0.56 GiB' && stat('archive_log_free') === '19.38 GiB') ok('Environment stats: archive-log filesystem used/free derived from ARCHLOG_USED/FREE_FS_MB');
+    else fail(`Environment stats: unexpected archive log used/free values ${JSON.stringify([stat('archive_log_used'), stat('archive_log_free')])}`);
     if (stat('db_backups_24h') === '1') ok('Environment stats: database backups in 24h deduplicate duplicate BACKUP_SERIES rows');
     else fail(`Environment stats: unexpected db backup 24h count ${JSON.stringify(stat('db_backups_24h'))}`);
     if (stat('library_private') === '12' && stat('library_scratch') === '4' && stat('library_names') === 'LIB1' && stat('library_drives') === '1') ok('Environment stats: library values derived from libraries, libvolumes, and drives');
@@ -3318,18 +3340,48 @@ section('59. Environment-at-a-glance statistics model and cover exports');
     if (zeroAuditOccStats.get('backup_occupancy') === '0.00 GiB' && zeroAuditOccStats.get('archive_occupancy') === '0.00 GiB' && zeroAuditOccStats.get('backup_copy_occupancy') === '0.00 GiB' && zeroAuditOccStats.get('archive_copy_occupancy') === '0.00 GiB') ok('Environment stats: AUDITOCC true zero values remain zero rather than Not available');
     else fail(`Environment stats: AUDITOCC zero handling incorrect ${JSON.stringify([zeroAuditOccStats.get('backup_occupancy'), zeroAuditOccStats.get('archive_occupancy'), zeroAuditOccStats.get('backup_copy_occupancy'), zeroAuditOccStats.get('archive_copy_occupancy')])}`);
 
+    const noLogState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    delete noLogState.imported['doc_04_log.csv'];
+    const noLogStats = new Map(deriveEnvironmentStatisticsModel(noLogState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (noLogStats.get('archive_log_size') === 'Not available' && noLogStats.get('archive_log_used') === 'Not available' && noLogStats.get('archive_log_free') === 'Not available' && noLogStats.get('activelog_fs_total') === 'Not available') ok('Environment stats: missing LOG dataset renders archive/active log fields as Not available');
+    else fail(`Environment stats: missing LOG dataset should render Not available for all log filesystem fields ${JSON.stringify([noLogStats.get('archive_log_size'), noLogStats.get('archive_log_used'), noLogStats.get('archive_log_free'), noLogStats.get('activelog_fs_total')])}`);
+
+    const blankArchlogState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    blankArchlogState.imported['doc_04_log.csv'] = importedFromObjects({
+      'doc_04_log.csv': [{ TOTAL_SPACE_GB: '8.00', PCT_USED: '25', ACTIVE_LOG_DIR: '/actlog', ARCH_LOG_DIR: '/archlog', MIRROR_LOG_DIR: '', AFAILOVER_LOG_DIR: '' }]
+    })['doc_04_log.csv'];
+    const blankArchlogStats = new Map(deriveEnvironmentStatisticsModel(blankArchlogState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (blankArchlogStats.get('archive_log_size') === 'Not available' && blankArchlogStats.get('archive_log_used') === 'Not available' && blankArchlogStats.get('archive_log_free') === 'Not available' && blankArchlogStats.get('activelog_fs_total') === 'Not available') ok('Environment stats: blank/absent ARCHLOG_TOL_FS_MB and ACTIVELOG_TOL_FS_MB fields render Not available');
+    else fail(`Environment stats: blank archlog fields should render Not available ${JSON.stringify([blankArchlogStats.get('archive_log_size'), blankArchlogStats.get('archive_log_used'), blankArchlogStats.get('activelog_fs_total')])}`);
+
+    const zeroArchlogState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    zeroArchlogState.imported['doc_04_log.csv'] = importedFromObjects({
+      'doc_04_log.csv': [{ TOTAL_SPACE_GB: '8.00', PCT_USED: '25', ACTIVE_LOG_DIR: '/actlog', ARCH_LOG_DIR: '/archlog', ARCHLOG_TOL_FS_MB: '0', ARCHLOG_USED_FS_MB: '0', ARCHLOG_FREE_FS_MB: '0', ACTIVELOG_TOL_FS_MB: '0', ACTIVELOG_USED_FS_MB: '0', ACTIVELOG_FREE_FS_MB: '0' }]
+    })['doc_04_log.csv'];
+    const zeroArchlogStats = new Map(deriveEnvironmentStatisticsModel(zeroArchlogState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (zeroArchlogStats.get('archive_log_size') === '0.00 GiB' && zeroArchlogStats.get('archive_log_used') === '0.00 GiB' && zeroArchlogStats.get('activelog_fs_total') === '0.00 GiB') ok('Environment stats: true-zero ARCHLOG/ACTIVELOG_TOL_FS_MB values remain 0.00 GiB rather than Not available');
+    else fail(`Environment stats: true-zero archlog values should stay 0.00 GiB ${JSON.stringify([zeroArchlogStats.get('archive_log_size'), zeroArchlogStats.get('archive_log_used'), zeroArchlogStats.get('activelog_fs_total')])}`);
+
+    const distinctLogFieldsState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    distinctLogFieldsState.imported['doc_04_log.csv'] = importedFromObjects({
+      'doc_04_log.csv': [{ TOTAL_SPACE_GB: '20.00', PCT_USED: '5', ACTIVE_LOG_DIR: '/actlog', ARCH_LOG_DIR: '/archlog', ACTIVELOG_TOL_FS_MB: '10240.00', ARCHLOG_TOL_FS_MB: '51200.00' }]
+    })['doc_04_log.csv'];
+    const distinctStats = new Map(deriveEnvironmentStatisticsModel(distinctLogFieldsState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (distinctStats.get('active_log_size') === '20.00 GiB' && distinctStats.get('activelog_fs_total') === '10.00 GiB' && distinctStats.get('archive_log_size') === '50.00 GiB') ok('Environment stats: active transaction-log allocation, active-log filesystem, and archive-log filesystem are distinct and not confused');
+    else fail(`Environment stats: active/archive log field separation incorrect ${JSON.stringify([distinctStats.get('active_log_size'), distinctStats.get('activelog_fs_total'), distinctStats.get('archive_log_size')])}`);
+
     const wbEnv = { SheetNames: [], Sheets: {} };
     const addEnvSheet = (ws, name) => { wbEnv.SheetNames.push(name); wbEnv.Sheets[name] = ws; };
     STATE.imported = clone(HEALTH_FIXTURE_GOOD);
     STATE.archive = baseState.archive;
     buildCoverSheet({ SheetNames: wbEnv.SheetNames, Sheets: wbEnv.Sheets, utils: { book_append_sheet: addEnvSheet } }, { customer:'ACME', preparedBy:'Analyst', reportDate:'2026-07-15', server:'SRV1' });
     const coverXmlCells = Object.values(wbEnv.Sheets.Cover || {}).filter(cell => cell && typeof cell === 'object' && Object.prototype.hasOwnProperty.call(cell, 'v')).map(cell => String(cell.v));
-    if (coverXmlCells.includes('Environment at a glance') && coverXmlCells.includes('Logical copy occupancy') && coverXmlCells.includes('Reporting occupancy (OCCUPANCY.REPORTING_MB)') && coverXmlCells.includes('Backup occupancy (AUDITOCC.BACKUP_MB)') && coverXmlCells.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverXmlCells.includes('TARGET1')) ok('Cover sheet: shared environment statistics appear with requested grouping labels');
+    if (coverXmlCells.includes('Environment at a glance') && coverXmlCells.includes('Logical copy occupancy') && coverXmlCells.includes('Reporting occupancy (OCCUPANCY.REPORTING_MB)') && coverXmlCells.includes('Backup occupancy (AUDITOCC.BACKUP_MB)') && coverXmlCells.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverXmlCells.includes('TARGET1') && coverXmlCells.includes('Archive-log filesystem total capacity') && coverXmlCells.includes('Active transaction-log allocated size')) ok('Cover sheet: shared environment statistics appear with requested grouping labels including archive-log filesystem capacity');
     else fail('Cover sheet: environment statistics missing expected labels or values');
 
     const coverReport = evaluateHealthcheckReport(baseState);
     const coverDocXml = parseStoredZipEntries(buildHealthcheckDocxBytes(coverReport)).get('word/document.xml') || '';
-    if (coverDocXml.includes('Environment at a glance') && coverDocXml.includes('Logical copy occupancy') && coverDocXml.includes('Reporting occupancy (OCCUPANCY.REPORTING_MB)') && coverDocXml.includes('Backup occupancy (AUDITOCC.BACKUP_MB)') && coverDocXml.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverDocXml.includes('TARGET1') && coverDocXml.includes('N/A') && coverDocXml.includes('Not available')) ok('Healthcheck DOCX: environment section uses shared model and preserves N/A vs Not available distinctions');
+    if (coverDocXml.includes('Environment at a glance') && coverDocXml.includes('Logical copy occupancy') && coverDocXml.includes('Reporting occupancy (OCCUPANCY.REPORTING_MB)') && coverDocXml.includes('Backup occupancy (AUDITOCC.BACKUP_MB)') && coverDocXml.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverDocXml.includes('TARGET1') && coverDocXml.includes('Archive-log filesystem total capacity') && coverDocXml.includes('Active transaction-log allocated size') && coverDocXml.includes('19.94 GiB') && coverDocXml.includes('Archive-log filesystem used') && coverDocXml.includes('Active-log filesystem total capacity')) ok('Healthcheck DOCX: environment section uses shared model and preserves archive-log filesystem capacity labels and values');
     else fail('Healthcheck DOCX: environment section missing shared-model labels/values');
   }
 }
