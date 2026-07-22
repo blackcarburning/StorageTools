@@ -1886,6 +1886,7 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
   'doc_03_dbspace.csv': [
     { VOLUME_NAME: 'DBV001', FILE_SYSTEM: '/tsm/db01', CAPACITY_MB: '8192' },
     { VOLUME_NAME: 'DBV002', FILE_SYSTEM: '/tsm/db02', CAPACITY_MB: '4096' },
+    // Intentional duplicate row to verify cover-statistics totals/path lists do not double-count repeated DBSPACE records.
     { VOLUME_NAME: 'DBV002', FILE_SYSTEM: '/tsm/db02', CAPACITY_MB: '4096' },
   ],
   'doc_04_log.csv': [{
