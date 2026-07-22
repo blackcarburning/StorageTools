@@ -1886,8 +1886,6 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
   'doc_03_dbspace.csv': [
     { VOLUME_NAME: 'DBV001', FILE_SYSTEM: '/tsm/db01', CAPACITY_MB: '8192' },
     { VOLUME_NAME: 'DBV002', FILE_SYSTEM: '/tsm/db02', CAPACITY_MB: '4096' },
-    // Intentional duplicate row to verify cover-statistics totals/path lists do not double-count repeated DBSPACE records.
-    { VOLUME_NAME: 'DBV002', FILE_SYSTEM: '/tsm/db02', CAPACITY_MB: '4096' },
   ],
   'doc_04_log.csv': [{
     TOTAL_SPACE_GB: '8.00', PCT_USED: '25',
@@ -3182,7 +3180,7 @@ section('59. Environment-at-a-glance statistics model and cover exports');
     else fail(`Environment stats: unexpected server level ${JSON.stringify(stat('server_level'))}`);
     if (stat('server_address') === 'srv1.example.com') ok('Environment stats: server DNS/IP prefers HLA address and excludes numeric LLA port');
     else fail(`Environment stats: unexpected server address ${JSON.stringify(stat('server_address'))}`);
-    if (stat('database_size') === '12.00 GiB') ok('Environment stats: database size totals DBSPACE capacity without double-counting duplicate rows');
+    if (stat('database_size') === '12.00 GiB') ok('Environment stats: database size totals DBSPACE capacity from imported DBSPACE rows');
     else fail(`Environment stats: unexpected database size ${JSON.stringify(stat('database_size'))}`);
     if (stat('database_paths') === '/tsm/db01, /tsm/db02') ok('Environment stats: database paths are deduplicated and sorted');
     else fail(`Environment stats: unexpected database paths ${JSON.stringify(stat('database_paths'))}`);
@@ -3200,6 +3198,18 @@ section('59. Environment-at-a-glance statistics model and cover exports');
     else fail(`Environment stats: unexpected node counts ${JSON.stringify([stat('registered_nodes'), stat('unique_nodes')])}`);
     if (stat('replication_configured') === 'Yes' && stat('replication_success_24h') === '1' && stat('replication_failed_24h') === '1' && stat('replication_source') === 'Yes' && stat('replication_target') === 'Yes' && stat('replication_partners') === 'TARGET1') ok('Environment stats: replication configuration, roles, partners, and 24h counts derived correctly');
     else fail(`Environment stats: unexpected replication values ${JSON.stringify([stat('replication_configured'), stat('replication_success_24h'), stat('replication_failed_24h'), stat('replication_source'), stat('replication_target'), stat('replication_partners')])}`);
+
+    const duplicateDbspaceState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    duplicateDbspaceState.imported['doc_03_dbspace.csv'] = importedFromObjects({
+      'doc_03_dbspace.csv': [
+        { VOLUME_NAME: 'DBV001', FILE_SYSTEM: '/tsm/db01', CAPACITY_MB: '8192' },
+        { VOLUME_NAME: 'DBV002', FILE_SYSTEM: '/tsm/db02', CAPACITY_MB: '4096' },
+        { VOLUME_NAME: 'DBV002', FILE_SYSTEM: '/tsm/db02', CAPACITY_MB: '4096' }
+      ]
+    })['doc_03_dbspace.csv'];
+    const duplicateDbspaceStats = new Map(deriveEnvironmentStatisticsModel(duplicateDbspaceState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (duplicateDbspaceStats.get('database_size') === '12.00 GiB' && duplicateDbspaceStats.get('database_paths') === '/tsm/db01, /tsm/db02') ok('Environment stats: duplicate DBSPACE rows do not double-count totals or paths');
+    else fail(`Environment stats: duplicate DBSPACE handling incorrect ${JSON.stringify([duplicateDbspaceStats.get('database_size'), duplicateDbspaceStats.get('database_paths')])}`);
 
     const noLibraryState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
     noLibraryState.imported['doc_22_libraries.csv'] = importedFromObjects({ 'doc_22_libraries.csv': [] })['doc_22_libraries.csv'];
