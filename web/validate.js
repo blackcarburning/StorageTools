@@ -3287,7 +3287,7 @@ section('59. Environment-at-a-glance statistics model and cover exports');
     containerPoolState.imported['doc_44_auditocc_by_node.csv'] = importedFromObjects({
       'doc_44_auditocc_by_node.csv': [
         { NODE_NAME: 'A', BACKUP_MB: '3106712', BACKUP_COPY_MB: '0', ARCHIVE_MB: '0', ARCHIVE_COPY_MB: '0', SPACEMG_MB: '0', SPACEMG_COPY_MB: '0', TOTAL_MB: '3106712', BACKUP_ACTIVE_MB: '0' },
-        { NODE_NAME: 'B', BACKUP_MB: '0', BACKUP_COPY_MB: '256', ARCHIVE_MB: '141', ARCHIVE_COPY_MB: '128', SPACEMG_MB: '0', SPACEMG_COPY_MB: '0', TOTAL_MB: '525', BACKUP_ACTIVE_MB: '0' }
+        { NODE_NAME: 'B', BACKUP_MB: '0', BACKUP_COPY_MB: '256', ARCHIVE_MB: '512', ARCHIVE_COPY_MB: '256', SPACEMG_MB: '0', SPACEMG_COPY_MB: '0', TOTAL_MB: '1024', BACKUP_ACTIVE_MB: '0' }
       ]
     })['doc_44_auditocc_by_node.csv'];
     const containerStats = new Map(deriveEnvironmentStatisticsModel(containerPoolState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
@@ -3297,9 +3297,9 @@ section('59. Environment-at-a-glance statistics model and cover exports');
       && containerStats.get('copy_logical') === 'Not available'
       && containerStats.get('reporting_occupancy') === '478.71 GiB'
       && containerStats.get('backup_occupancy') === '3033.90 GiB'
-      && containerStats.get('archive_occupancy') === '0.14 GiB'
+      && containerStats.get('archive_occupancy') === '0.50 GiB'
       && containerStats.get('backup_copy_occupancy') === '0.25 GiB'
-      && containerStats.get('archive_copy_occupancy') === '0.13 GiB') ok('Environment stats: container-pool blanks stay Not available while reporting/AUDITOCC values aggregate separately');
+      && containerStats.get('archive_copy_occupancy') === '0.25 GiB') ok('Environment stats: container-pool blanks stay Not available while reporting/AUDITOCC values aggregate separately');
     else fail(`Environment stats: container-pool occupancy handling incorrect ${JSON.stringify([containerStats.get('primary_physical'), containerStats.get('primary_logical'), containerStats.get('copy_physical'), containerStats.get('copy_logical'), containerStats.get('reporting_occupancy'), containerStats.get('backup_occupancy'), containerStats.get('archive_occupancy'), containerStats.get('backup_copy_occupancy'), containerStats.get('archive_copy_occupancy')])}`);
 
     const noAuditOccState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
