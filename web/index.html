@@ -710,12 +710,16 @@ const ALL_QUERIES = [
     outputFile:'doc_29_occ_by_node.csv' },
 
   { id:'doc_30_occ_by_pool', title:'Occupancy — by Storage Pool', section:'Occupancy',
-    sql:"SELECT O.STGPOOL_NAME,S.POOLTYPE,CAST(SUM(O.LOGICAL_MB)/1024 AS DECIMAL(12,2)) AS LOGICAL_GB,CAST(SUM(O.PHYSICAL_MB)/1024 AS DECIMAL(12,2)) AS PHYSICAL_GB,SUM(O.NUM_FILES) AS NUM_FILES FROM OCCUPANCY O INNER JOIN STGPOOLS S ON O.STGPOOL_NAME=S.STGPOOL_NAME GROUP BY O.STGPOOL_NAME,S.POOLTYPE ORDER BY LOGICAL_GB DESC",
+    sql:"SELECT O.STGPOOL_NAME,S.POOLTYPE,CAST(SUM(O.LOGICAL_MB)/1024 AS DECIMAL(12,2)) AS LOGICAL_GB,CAST(SUM(O.PHYSICAL_MB)/1024 AS DECIMAL(12,2)) AS PHYSICAL_GB,CAST(SUM(O.REPORTING_MB)/1024 AS DECIMAL(12,2)) AS REPORTING_GB,SUM(O.NUM_FILES) AS NUM_FILES FROM OCCUPANCY O INNER JOIN STGPOOLS S ON O.STGPOOL_NAME=S.STGPOOL_NAME GROUP BY O.STGPOOL_NAME,S.POOLTYPE ORDER BY LOGICAL_GB DESC",
     outputFile:'doc_30_occ_by_pool.csv' },
 
   { id:'doc_31_fs_summary', title:'Filespaces — Summary by Node', section:'Occupancy',
     sql:"SELECT NODE_NAME,COUNT(*) AS FS_COUNT,CAST(SUM(CAPACITY)/1024 AS DECIMAL(12,2)) AS TOTAL_CAP_GB,CAST(SUM(CAPACITY/100*PCT_UTIL)/1024 AS DECIMAL(12,2)) AS USED_GB FROM FILESPACES WHERE FILESPACE_TYPE NOT IN ('VSS') AND FILESPACE_TYPE NOT LIKE 'API:%%' GROUP BY NODE_NAME ORDER BY TOTAL_CAP_GB DESC",
     outputFile:'doc_31_fs_summary.csv' },
+
+  { id:'doc_44_auditocc_by_node', title:'AUDITOCC — by Node', section:'Occupancy', warnIfMissing:true,
+    sql:"SELECT NODE_NAME,BACKUP_MB,BACKUP_COPY_MB,ARCHIVE_MB,ARCHIVE_COPY_MB,SPACEMG_MB,SPACEMG_COPY_MB,TOTAL_MB,BACKUP_ACTIVE_MB,CAST(BACKUP_MB/1024 AS DECIMAL(12,2)) AS BACKUP_GIB,CAST(BACKUP_COPY_MB/1024 AS DECIMAL(12,2)) AS BACKUP_COPY_GIB,CAST(ARCHIVE_MB/1024 AS DECIMAL(12,2)) AS ARCHIVE_GIB,CAST(ARCHIVE_COPY_MB/1024 AS DECIMAL(12,2)) AS ARCHIVE_COPY_GIB,CAST(SPACEMG_MB/1024 AS DECIMAL(12,2)) AS SPACEMG_GIB,CAST(SPACEMG_COPY_MB/1024 AS DECIMAL(12,2)) AS SPACEMG_COPY_GIB,CAST(TOTAL_MB/1024 AS DECIMAL(12,2)) AS TOTAL_GIB,CAST(BACKUP_ACTIVE_MB/1024 AS DECIMAL(12,2)) AS BACKUP_ACTIVE_GIB FROM AUDITOCC ORDER BY NODE_NAME",
+    outputFile:'doc_44_auditocc_by_node.csv' },
 
   // ── Replication ──────────────────────────────────────────────────────────
   { id:'doc_32_servers', title:'Defined Servers', section:'Replication',
@@ -3138,6 +3142,11 @@ function cloneImportedSnapshot(imported) {
  *   available so multi-volume backup events are not double-counted.
  * - Unique nodes follows the legacy healthcheck meaning: unique non-blank
  *   TCP_ADDRESS values.
+ * - Container pools can leave OCCUPANCY.PHYSICAL_MB/LOGICAL_MB blank while
+ *   OCCUPANCY.REPORTING_MB remains authoritative, so reporting occupancy is
+ *   tracked separately and never relabeled as physical/logical.
+ * - AUDITOCC category columns are node-granular occupancy classes (backup,
+ *   archive, copy, etc.) and are aggregated separately from pool occupancy.
  * - Logical copy occupancy is interpreted as copy-pool logical occupancy.
  * - Replication source/target roles use explicit replication fields
  *   (NODES.REPL_MODE and REPLSERVERS metadata) rather than display text.
@@ -3162,6 +3171,7 @@ function deriveEnvironmentStatisticsModel(stateLike, reportMeta) {
   const driveRows = ctx.rows('doc_23_drives.csv');
   const libVolumeRows = ctx.rows('doc_27_libvols_summary.csv');
   const occupancyRows = ctx.rows('doc_30_occ_by_pool.csv');
+  const auditOccRows = ctx.rows('doc_44_auditocc_by_node.csv');
   const nodeData = ctx.getData('doc_07_nodes.csv');
   const nodeRows = ctx.rows('doc_07_nodes.csv');
   const replServerData = ctx.getData('doc_33_repl_servers.csv');
@@ -3204,6 +3214,11 @@ function deriveEnvironmentStatisticsModel(stateLike, reportMeta) {
   let primaryLogical = 'Not available';
   let copyPhysical = 'Not available';
   let copyLogical = 'Not available';
+  let reportingOccupancy = 'Not available';
+  let backupOccupancy = 'Not available';
+  let archiveOccupancy = 'Not available';
+  let backupCopyOccupancy = 'Not available';
+  let archiveCopyOccupancy = 'Not available';
   if (occupancyRows) {
     const primaryRows = occupancyRows.filter(row => String(ctx.getField(row, 'POOLTYPE')).trim().toUpperCase() === 'PRIMARY');
     const copyRows = occupancyRows.filter(row => String(ctx.getField(row, 'POOLTYPE')).trim().toUpperCase() === 'COPY');
@@ -3211,6 +3226,13 @@ function deriveEnvironmentStatisticsModel(stateLike, reportMeta) {
     primaryLogical = formatGiB(sumFieldNumbers(primaryRows, row => ctx.getField(row, 'LOGICAL_GB')));
     copyPhysical = formatGiB(sumFieldNumbers(copyRows, row => ctx.getField(row, 'PHYSICAL_GB')));
     copyLogical = formatGiB(sumFieldNumbers(copyRows, row => ctx.getField(row, 'LOGICAL_GB')));
+    reportingOccupancy = formatGiB(sumFieldNumbers(occupancyRows, row => ctx.getField(row, 'REPORTING_GB')));
+  }
+  if (auditOccRows) {
+    backupOccupancy = formatMiBAsGiB(sumFieldNumbers(auditOccRows, row => ctx.getField(row, 'BACKUP_MB')));
+    archiveOccupancy = formatMiBAsGiB(sumFieldNumbers(auditOccRows, row => ctx.getField(row, 'ARCHIVE_MB')));
+    backupCopyOccupancy = formatMiBAsGiB(sumFieldNumbers(auditOccRows, row => ctx.getField(row, 'BACKUP_COPY_MB')));
+    archiveCopyOccupancy = formatMiBAsGiB(sumFieldNumbers(auditOccRows, row => ctx.getField(row, 'ARCHIVE_COPY_MB')));
   }
 
   const nodeAddressValue = (() => {
@@ -3335,6 +3357,11 @@ function deriveEnvironmentStatisticsModel(stateLike, reportMeta) {
           { key:'primary_logical', label:'Logical primary occupancy', value:primaryLogical, sources:['doc_30_occ_by_pool.csv'] },
           { key:'copy_physical', label:'Physical copy occupancy', value:copyPhysical, sources:['doc_30_occ_by_pool.csv'] },
           { key:'copy_logical', label:'Logical copy occupancy', value:copyLogical, sources:['doc_30_occ_by_pool.csv'] },
+          { key:'reporting_occupancy', label:'Reporting occupancy (OCCUPANCY.REPORTING_MB)', value:reportingOccupancy, sources:['doc_30_occ_by_pool.csv'] },
+          { key:'backup_occupancy', label:'Backup occupancy (AUDITOCC.BACKUP_MB)', value:backupOccupancy, sources:['doc_44_auditocc_by_node.csv'] },
+          { key:'archive_occupancy', label:'Archive occupancy (AUDITOCC.ARCHIVE_MB)', value:archiveOccupancy, sources:['doc_44_auditocc_by_node.csv'] },
+          { key:'backup_copy_occupancy', label:'Backup copy occupancy (AUDITOCC.BACKUP_COPY_MB)', value:backupCopyOccupancy, sources:['doc_44_auditocc_by_node.csv'] },
+          { key:'archive_copy_occupancy', label:'Archive copy occupancy (AUDITOCC.ARCHIVE_COPY_MB)', value:archiveCopyOccupancy, sources:['doc_44_auditocc_by_node.csv'] },
           { key:'registered_nodes', label:'Registered nodes', value:nodeRows ? String(nodeRows.length) : 'Not available', sources:['doc_07_nodes.csv'] },
           { key:'unique_nodes', label:'Unique node addresses (non-blank TCP_ADDRESS)', value:nodeAddressValue, sources:['doc_07_nodes.csv'] }
         ]
@@ -5379,6 +5406,7 @@ async function describeOpenAiHttpError(resp) {
 
 function buildHealthcheckAiPayload(report, limitChars) {
   const maxChars = limitChars || 26000;
+  const statsModel = deriveEnvironmentStatisticsModel({ imported: report.importedSnapshot || {}, archive: report.archive || null }, report.metadata || {});
   const ordered = report.results.slice().sort((a, b) => {
     const rankDiff = statusSeverityRank(a.status) - statusSeverityRank(b.status);
     return rankDiff || a.title.localeCompare(b.title);
@@ -5412,6 +5440,10 @@ function buildHealthcheckAiPayload(report, limitChars) {
       overall_status: report.overall,
       counts: report.counts,
       summary_bullets: report.summaryBullets,
+      environment_statistics: statsModel.sections.map(section => ({
+        section: section.title,
+        items: section.items.map(item => ({ key:item.key, label:item.label, value:item.value }))
+      })),
       findings: included,
       note: truncated ? 'Lower-priority findings were truncated after preserving all red and amber items.' : 'All findings included.'
     },

@@ -215,6 +215,8 @@ assertContains('hc_33_retsets_expiring', ['FROM RETSETS', 'EXPDATE', 'RETPOOL'])
 assertContains('doc_33_repl_servers', ['FROM REPLSERVERS']);
 assertContains('doc_43_node_repl_status', ['REPL_MODE', 'REPL_STATE', 'REPL_BKRULE', 'REPL_ARRULE', 'REPL_SPRULE']);
 assertContains('hc_37_node_repl_24h', ['FROM REPLICATIONVIEW', 'COMP_STATE', 'COMP_REASON', 'BKSERVER', 'ARSERVER', 'SMSERVER']);
+assertContains('doc_30_occ_by_pool', ['REPORTING_MB']);
+assertContains('doc_44_auditocc_by_node', ['FROM AUDITOCC', 'BACKUP_MB', 'BACKUP_COPY_MB', 'ARCHIVE_MB', 'ARCHIVE_COPY_MB', 'SPACEMG_MB', 'SPACEMG_COPY_MB', 'TOTAL_MB', 'BACKUP_ACTIVE_MB']);
 assertContains('hc_18_actlog_errors', ['NODENAME', 'SERVERNAME', 'SCHEDNAME', 'DOMAINNAME']);
 assertNotContains('hc_18_actlog_errors', ['NODE_NAME', 'SERVER_NAME', 'SCHED_NAME', 'DOMAIN_NAME']);
 assertContains('hc_17_no_repl_start', ['LAST_REPL_START_1', 'LAST_REPL_START_2']);
@@ -1922,8 +1924,12 @@ const HEALTH_FIXTURE_GOOD = importedFromObjects({
     { LIBRARY_NAME: 'LIB1', STATUS: 'SCRATCH', VOL_COUNT: '4' }
   ],
   'doc_30_occ_by_pool.csv': [
-    { STGPOOL_NAME: 'DISKPOOL1', POOLTYPE: 'PRIMARY', LOGICAL_GB: '10.50', PHYSICAL_GB: '8.25' },
-    { STGPOOL_NAME: 'COPYPOOL1', POOLTYPE: 'COPY', LOGICAL_GB: '3.50', PHYSICAL_GB: '2.25' }
+    { STGPOOL_NAME: 'DISKPOOL1', POOLTYPE: 'PRIMARY', LOGICAL_GB: '10.50', PHYSICAL_GB: '8.25', REPORTING_GB: '9.75' },
+    { STGPOOL_NAME: 'COPYPOOL1', POOLTYPE: 'COPY', LOGICAL_GB: '3.50', PHYSICAL_GB: '2.25', REPORTING_GB: '3.25' }
+  ],
+  'doc_44_auditocc_by_node.csv': [
+    { NODE_NAME: 'NODE1', BACKUP_MB: '2048', BACKUP_COPY_MB: '512', ARCHIVE_MB: '1024', ARCHIVE_COPY_MB: '256', SPACEMG_MB: '128', SPACEMG_COPY_MB: '64', TOTAL_MB: '4032', BACKUP_ACTIVE_MB: '1536' },
+    { NODE_NAME: 'NODE2', BACKUP_MB: '1024', BACKUP_COPY_MB: '0', ARCHIVE_MB: '512', ARCHIVE_COPY_MB: '128', SPACEMG_MB: '0', SPACEMG_COPY_MB: '0', TOTAL_MB: '1664', BACKUP_ACTIVE_MB: '256' }
   ],
   'doc_33_repl_servers.csv': [
     { SERVER_NAME: 'SRV1', TARGET_REPL_SERVER_NAME: 'TARGET1', REPL_STATE: 'ENABLED', LAST_SEND_STATUS: 'SUCCESS' }
@@ -2181,6 +2187,8 @@ section('37. Healthcheck AI model filtering and response parsing');
   const payloadJson = JSON.stringify(payload.modelInput);
   if (!/perlRef|Perl parity|parity-note|HELIX get_the_variables/i.test(payloadJson)) ok('Healthcheck: AI payload excludes user-facing Perl source/parity text');
   else fail('Healthcheck: AI payload still includes Perl source/parity text');
+  if (payloadJson.includes('Reporting occupancy (OCCUPANCY.REPORTING_MB)') && payloadJson.includes('Backup occupancy (AUDITOCC.BACKUP_MB)')) ok('Healthcheck: AI payload includes explicit occupancy source labels for reporting vs AUDITOCC metrics');
+  else fail('Healthcheck: AI payload missing explicit occupancy source labels');
 }
 
 section('38. Healthcheck AI request, checkbox guard, and key hygiene');
@@ -3213,8 +3221,16 @@ section('59. Environment-at-a-glance statistics model and cover exports');
     else fail(`Environment stats: unexpected db backup 24h count ${JSON.stringify(stat('db_backups_24h'))}`);
     if (stat('library_private') === '12' && stat('library_scratch') === '4' && stat('library_names') === 'LIB1' && stat('library_drives') === '1') ok('Environment stats: library values derived from libraries, libvolumes, and drives');
     else fail(`Environment stats: unexpected library values ${JSON.stringify([stat('library_private'), stat('library_scratch'), stat('library_names'), stat('library_drives')])}`);
-    if (stat('primary_physical') === '8.25 GiB' && stat('primary_logical') === '10.50 GiB' && stat('copy_physical') === '2.25 GiB' && stat('copy_logical') === '3.50 GiB') ok('Environment stats: primary/copy occupancy uses pooltype semantics with separate physical and logical totals');
-    else fail(`Environment stats: unexpected occupancy values ${JSON.stringify([stat('primary_physical'), stat('primary_logical'), stat('copy_physical'), stat('copy_logical')])}`);
+    if (stat('primary_physical') === '8.25 GiB'
+      && stat('primary_logical') === '10.50 GiB'
+      && stat('copy_physical') === '2.25 GiB'
+      && stat('copy_logical') === '3.50 GiB'
+      && stat('reporting_occupancy') === '13.00 GiB'
+      && stat('backup_occupancy') === '3.00 GiB'
+      && stat('archive_occupancy') === '1.50 GiB'
+      && stat('backup_copy_occupancy') === '0.50 GiB'
+      && stat('archive_copy_occupancy') === '0.38 GiB') ok('Environment stats: occupancy model keeps physical/logical separate and adds reporting plus AUDITOCC primary/copy splits');
+    else fail(`Environment stats: unexpected occupancy values ${JSON.stringify([stat('primary_physical'), stat('primary_logical'), stat('copy_physical'), stat('copy_logical'), stat('reporting_occupancy'), stat('backup_occupancy'), stat('archive_occupancy'), stat('backup_copy_occupancy'), stat('archive_copy_occupancy')])}`);
     if (stat('registered_nodes') === '2' && stat('unique_nodes') === '2') ok('Environment stats: registered nodes and unique TCP-address count derived correctly');
     else fail(`Environment stats: unexpected node counts ${JSON.stringify([stat('registered_nodes'), stat('unique_nodes')])}`);
     if (stat('replication_configured') === 'Yes' && stat('replication_success_24h') === '1' && stat('replication_failed_24h') === '1' && stat('replication_source') === 'Yes' && stat('replication_target') === 'Yes' && stat('replication_partners') === 'TARGET1') ok('Environment stats: replication configuration, roles, partners, and 24h counts derived correctly');
@@ -3261,18 +3277,59 @@ section('59. Environment-at-a-glance statistics model and cover exports');
     if (unavailableReplStats.get('replication_configured') === 'Yes' && unavailableReplStats.get('replication_success_24h') === 'Not available' && unavailableReplStats.get('replication_failed_24h') === 'Not available') ok('Environment stats: configured replication with missing 24h dataset renders Not available counts');
     else fail(`Environment stats: missing-replication-data case incorrect ${JSON.stringify([unavailableReplStats.get('replication_configured'), unavailableReplStats.get('replication_success_24h'), unavailableReplStats.get('replication_failed_24h')])}`);
 
+    const containerPoolState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    containerPoolState.imported['doc_30_occ_by_pool.csv'] = importedFromObjects({
+      'doc_30_occ_by_pool.csv': [
+        { STGPOOL_NAME: 'CONTAINER', POOLTYPE: 'PRIMARY', LOGICAL_GB: '', PHYSICAL_GB: '', REPORTING_GB: '468.71', NUM_FILES: '10' },
+        { STGPOOL_NAME: 'COPYCONTAINER', POOLTYPE: 'COPY', LOGICAL_GB: '', PHYSICAL_GB: '', REPORTING_GB: '10.00', NUM_FILES: '1' }
+      ]
+    })['doc_30_occ_by_pool.csv'];
+    containerPoolState.imported['doc_44_auditocc_by_node.csv'] = importedFromObjects({
+      'doc_44_auditocc_by_node.csv': [
+        { NODE_NAME: 'A', BACKUP_MB: '3106712', BACKUP_COPY_MB: '0', ARCHIVE_MB: '0', ARCHIVE_COPY_MB: '0', SPACEMG_MB: '0', SPACEMG_COPY_MB: '0', TOTAL_MB: '3106712', BACKUP_ACTIVE_MB: '0' },
+        { NODE_NAME: 'B', BACKUP_MB: '0', BACKUP_COPY_MB: '256', ARCHIVE_MB: '512', ARCHIVE_COPY_MB: '256', SPACEMG_MB: '0', SPACEMG_COPY_MB: '0', TOTAL_MB: '1024', BACKUP_ACTIVE_MB: '0' }
+      ]
+    })['doc_44_auditocc_by_node.csv'];
+    const containerStats = new Map(deriveEnvironmentStatisticsModel(containerPoolState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (containerStats.get('primary_physical') === 'Not available'
+      && containerStats.get('primary_logical') === 'Not available'
+      && containerStats.get('copy_physical') === 'Not available'
+      && containerStats.get('copy_logical') === 'Not available'
+      && containerStats.get('reporting_occupancy') === '478.71 GiB'
+      && containerStats.get('backup_occupancy') === '3033.90 GiB'
+      && containerStats.get('archive_occupancy') === '0.50 GiB'
+      && containerStats.get('backup_copy_occupancy') === '0.25 GiB'
+      && containerStats.get('archive_copy_occupancy') === '0.25 GiB') ok('Environment stats: container-pool blanks stay Not available while reporting/AUDITOCC values aggregate separately');
+    else fail(`Environment stats: container-pool occupancy handling incorrect ${JSON.stringify([containerStats.get('primary_physical'), containerStats.get('primary_logical'), containerStats.get('copy_physical'), containerStats.get('copy_logical'), containerStats.get('reporting_occupancy'), containerStats.get('backup_occupancy'), containerStats.get('archive_occupancy'), containerStats.get('backup_copy_occupancy'), containerStats.get('archive_copy_occupancy')])}`);
+
+    const noAuditOccState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    delete noAuditOccState.imported['doc_44_auditocc_by_node.csv'];
+    const noAuditOccStats = new Map(deriveEnvironmentStatisticsModel(noAuditOccState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (noAuditOccStats.get('backup_occupancy') === 'Not available' && noAuditOccStats.get('archive_occupancy') === 'Not available' && noAuditOccStats.get('backup_copy_occupancy') === 'Not available' && noAuditOccStats.get('archive_copy_occupancy') === 'Not available') ok('Environment stats: missing AUDITOCC dataset renders Not available occupancy categories');
+    else fail(`Environment stats: missing AUDITOCC handling incorrect ${JSON.stringify([noAuditOccStats.get('backup_occupancy'), noAuditOccStats.get('archive_occupancy'), noAuditOccStats.get('backup_copy_occupancy'), noAuditOccStats.get('archive_copy_occupancy')])}`);
+
+    const zeroAuditOccState = makeHealthState(clone(HEALTH_FIXTURE_GOOD));
+    zeroAuditOccState.imported['doc_44_auditocc_by_node.csv'] = importedFromObjects({
+      'doc_44_auditocc_by_node.csv': [
+        { NODE_NAME: 'ZERO1', BACKUP_MB: '0', BACKUP_COPY_MB: '0', ARCHIVE_MB: '0', ARCHIVE_COPY_MB: '0', SPACEMG_MB: '0', SPACEMG_COPY_MB: '0', TOTAL_MB: '0', BACKUP_ACTIVE_MB: '0' }
+      ]
+    })['doc_44_auditocc_by_node.csv'];
+    const zeroAuditOccStats = new Map(deriveEnvironmentStatisticsModel(zeroAuditOccState, { server:'SRV1' }).sections.flatMap(section => section.items.map(item => [item.key, item.value])));
+    if (zeroAuditOccStats.get('backup_occupancy') === '0.00 GiB' && zeroAuditOccStats.get('archive_occupancy') === '0.00 GiB' && zeroAuditOccStats.get('backup_copy_occupancy') === '0.00 GiB' && zeroAuditOccStats.get('archive_copy_occupancy') === '0.00 GiB') ok('Environment stats: AUDITOCC true zero values remain zero rather than Not available');
+    else fail(`Environment stats: AUDITOCC zero handling incorrect ${JSON.stringify([zeroAuditOccStats.get('backup_occupancy'), zeroAuditOccStats.get('archive_occupancy'), zeroAuditOccStats.get('backup_copy_occupancy'), zeroAuditOccStats.get('archive_copy_occupancy')])}`);
+
     const wbEnv = { SheetNames: [], Sheets: {} };
     const addEnvSheet = (ws, name) => { wbEnv.SheetNames.push(name); wbEnv.Sheets[name] = ws; };
     STATE.imported = clone(HEALTH_FIXTURE_GOOD);
     STATE.archive = baseState.archive;
     buildCoverSheet({ SheetNames: wbEnv.SheetNames, Sheets: wbEnv.Sheets, utils: { book_append_sheet: addEnvSheet } }, { customer:'ACME', preparedBy:'Analyst', reportDate:'2026-07-15', server:'SRV1' });
     const coverXmlCells = Object.values(wbEnv.Sheets.Cover || {}).filter(cell => cell && typeof cell === 'object' && Object.prototype.hasOwnProperty.call(cell, 'v')).map(cell => String(cell.v));
-    if (coverXmlCells.includes('Environment at a glance') && coverXmlCells.includes('Logical copy occupancy') && coverXmlCells.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverXmlCells.includes('TARGET1')) ok('Cover sheet: shared environment statistics appear with requested grouping labels');
+    if (coverXmlCells.includes('Environment at a glance') && coverXmlCells.includes('Logical copy occupancy') && coverXmlCells.includes('Reporting occupancy (OCCUPANCY.REPORTING_MB)') && coverXmlCells.includes('Backup occupancy (AUDITOCC.BACKUP_MB)') && coverXmlCells.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverXmlCells.includes('TARGET1')) ok('Cover sheet: shared environment statistics appear with requested grouping labels');
     else fail('Cover sheet: environment statistics missing expected labels or values');
 
     const coverReport = evaluateHealthcheckReport(baseState);
     const coverDocXml = parseStoredZipEntries(buildHealthcheckDocxBytes(coverReport)).get('word/document.xml') || '';
-    if (coverDocXml.includes('Environment at a glance') && coverDocXml.includes('Logical copy occupancy') && coverDocXml.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverDocXml.includes('TARGET1') && coverDocXml.includes('N/A') && coverDocXml.includes('Not available')) ok('Healthcheck DOCX: environment section uses shared model and preserves N/A vs Not available distinctions');
+    if (coverDocXml.includes('Environment at a glance') && coverDocXml.includes('Logical copy occupancy') && coverDocXml.includes('Reporting occupancy (OCCUPANCY.REPORTING_MB)') && coverDocXml.includes('Backup occupancy (AUDITOCC.BACKUP_MB)') && coverDocXml.includes('Unique node addresses (non-blank TCP_ADDRESS)') && coverDocXml.includes('TARGET1') && coverDocXml.includes('N/A') && coverDocXml.includes('Not available')) ok('Healthcheck DOCX: environment section uses shared model and preserves N/A vs Not available distinctions');
     else fail('Healthcheck DOCX: environment section missing shared-model labels/values');
   }
 }
