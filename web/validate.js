@@ -3038,7 +3038,7 @@ section('55. IBM SP SQL regression — hc_13 and hc_17 use compatible direct-joi
   else fail('SH hc_17_no_repl_start: missing compatible direct-join SQL');
 }
 
-section('55a. CMD and SH collector SQL includes archive-log and active-log filesystem fields');
+section('CMD and SH collector SQL includes archive-log and active-log filesystem fields');
 {
   const cmd = generateCmdContent();
   const sh  = generateShContent();
@@ -3054,7 +3054,7 @@ section('55a. CMD and SH collector SQL includes archive-log and active-log files
   else fail('SH doc_04_log SQL missing ACTIVELOG_TOL/USED/FREE_FS_MB');
 }
 
-
+section('56. ACTLOG no-match filtering');
 {
   const actlogQuery = { id: 'hc_18_actlog_errors', outputFile: 'hc_18_actlog_errors.csv', actlogSource: true };
 
