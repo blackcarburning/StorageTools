@@ -510,7 +510,7 @@ const ALL_QUERIES = [
     outputFile:'doc_03_dbspace.csv' },
 
   { id:'doc_04_log', title:'Transaction Log', section:'Server',
-    sql:"SELECT CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_SPACE_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_SPACE_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,CAST(FLOAT(USED_SPACE_MB)/FLOAT(NULLIF(TOTAL_SPACE_MB,0))*100 AS DECIMAL(5,2)) AS PCT_USED,ACTIVE_LOG_DIR,MIRROR_LOG_DIR,AFAILOVER_LOG_DIR,ARCH_LOG_DIR FROM LOG",
+    sql:"SELECT CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_SPACE_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_SPACE_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,CAST(FLOAT(USED_SPACE_MB)/FLOAT(NULLIF(TOTAL_SPACE_MB,0))*100 AS DECIMAL(5,2)) AS PCT_USED,ACTIVE_LOG_DIR,ACTIVELOG_TOL_FS_MB,ACTIVELOG_USED_FS_MB,ACTIVELOG_FREE_FS_MB,MIRROR_LOG_DIR,AFAILOVER_LOG_DIR,ARCH_LOG_DIR,ARCHLOG_TOL_FS_MB,ARCHLOG_USED_FS_MB,ARCHLOG_FREE_FS_MB FROM LOG",
     outputFile:'doc_04_log.csv' },
 
   { id:'doc_05_options', title:'Server Options', section:'Server',
@@ -526,7 +526,7 @@ const ALL_QUERIES = [
     outputFile:'hc_02_db_backups.csv' },
 
   { id:'hc_03_log_space', title:'Transaction Log Space Status', section:'Server',
-    sql:"SELECT CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_SPACE_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_SPACE_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,CAST(FLOAT(USED_SPACE_MB)/FLOAT(NULLIF(TOTAL_SPACE_MB,0))*100 AS DECIMAL(5,2)) AS PCT_USED,ACTIVE_LOG_DIR,ARCH_LOG_DIR FROM LOG",
+    sql:"SELECT CAST(TOTAL_SPACE_MB/1024 AS DECIMAL(12,2)) AS TOTAL_SPACE_GB,CAST(USED_SPACE_MB/1024 AS DECIMAL(12,2)) AS USED_SPACE_GB,CAST(FREE_SPACE_MB/1024 AS DECIMAL(12,2)) AS FREE_SPACE_GB,CAST(FLOAT(USED_SPACE_MB)/FLOAT(NULLIF(TOTAL_SPACE_MB,0))*100 AS DECIMAL(5,2)) AS PCT_USED,ACTIVE_LOG_DIR,ACTIVELOG_TOL_FS_MB,ACTIVELOG_USED_FS_MB,ACTIVELOG_FREE_FS_MB,ARCH_LOG_DIR,ARCHLOG_TOL_FS_MB,ARCHLOG_USED_FS_MB,ARCHLOG_FREE_FS_MB FROM LOG",
     outputFile:'hc_03_log_space.csv' },
 
   { id:'hc_29_db_backup_age', title:'Database Backup Age', section:'Server',
@@ -3325,15 +3325,14 @@ function deriveEnvironmentStatisticsModel(stateLike, reportMeta) {
         items: [
           { key:'database_size', label:'Database size', value:dbCapacityMiB != null ? formatMiBAsGiB(dbCapacityMiB) : formatGiB(ctx.getField(dbRow, 'TOTAL_GB')), sources:['doc_03_dbspace.csv', 'doc_02_db.csv'] },
           { key:'database_paths', label:'Database filenames / paths', value:dbspaceRows ? (dbPathValues.length ? dbPathValues.join(', ') : 'Not available') : 'Not available', sources:['doc_03_dbspace.csv'] },
-          { key:'active_log_size', label:'Active log size', value:formatGiB(ctx.getField(logRow, 'TOTAL_SPACE_GB')), sources:['doc_04_log.csv'] },
+          { key:'active_log_size', label:'Active transaction-log allocated size', value:formatGiB(ctx.getField(logRow, 'TOTAL_SPACE_GB')), sources:['doc_04_log.csv'] },
           { key:'active_log_path', label:'Active log path / directory', value:String(ctx.getField(logRow, 'ACTIVE_LOG_DIR')).trim() || 'Not available', sources:['doc_04_log.csv'] },
-          { key:'archive_log_size', label:'Archive log size', value:(() => {
-            const gbValue = ctx.getField(logRow, 'ARCHIVE_LOG_SIZE_GB', 'ARCHIVE_SPACE_GB', 'ARCHIVE_TOTAL_SPACE_GB');
-            if (String(gbValue || '').trim()) return formatGiB(gbValue);
-            const mbValue = ctx.getField(logRow, 'ARCHIVE_LOG_SIZE_MB', 'ARCHIVE_SPACE_MB', 'ARCHIVE_TOTAL_SPACE_MB');
-            if (String(mbValue || '').trim()) return formatMiBAsGiB(mbValue);
-            return 'Not available';
-          })(), sources:['doc_04_log.csv'] },
+          { key:'activelog_fs_total', label:'Active-log filesystem total capacity', value:formatMiBAsGiB(ctx.getField(logRow, 'ACTIVELOG_TOL_FS_MB')), sources:['doc_04_log.csv'] },
+          { key:'activelog_fs_used', label:'Active-log filesystem used', value:formatMiBAsGiB(ctx.getField(logRow, 'ACTIVELOG_USED_FS_MB')), sources:['doc_04_log.csv'] },
+          { key:'activelog_fs_free', label:'Active-log filesystem free', value:formatMiBAsGiB(ctx.getField(logRow, 'ACTIVELOG_FREE_FS_MB')), sources:['doc_04_log.csv'] },
+          { key:'archive_log_size', label:'Archive-log filesystem total capacity', value:formatMiBAsGiB(ctx.getField(logRow, 'ARCHLOG_TOL_FS_MB')), sources:['doc_04_log.csv'] },
+          { key:'archive_log_used', label:'Archive-log filesystem used', value:formatMiBAsGiB(ctx.getField(logRow, 'ARCHLOG_USED_FS_MB')), sources:['doc_04_log.csv'] },
+          { key:'archive_log_free', label:'Archive-log filesystem free', value:formatMiBAsGiB(ctx.getField(logRow, 'ARCHLOG_FREE_FS_MB')), sources:['doc_04_log.csv'] },
           { key:'archive_log_path', label:'Archive log path / directory', value:String(ctx.getField(logRow, 'ARCH_LOG_DIR')).trim() || 'Not available', sources:['doc_04_log.csv'] },
           { key:'db_backups_24h', label:'Successful database backups (24h)', value:(() => {
             const count = countDistinctRecentDbBackupEvents(ctx);
